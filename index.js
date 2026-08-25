@@ -218,13 +218,22 @@ async function isUrlSafe(rawUrl) {
 }
 
 // ---------- URL normalisation ----------
-function isLocaleUrl(rawUrl) {
+// Returns the two-letter locale segment a path starts with (e.g. "/en/about" -> "en"), or null.
+function getLocalePrefix(rawUrl) {
   try {
     const { pathname } = new URL(rawUrl);
-    return /^\/[a-z]{2}(\/|$)/i.test(pathname);
+    const match = pathname.match(/^\/([a-z]{2})(\/|$)/i);
+    return match ? match[1].toLowerCase() : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// True when the link is under a *different* locale than the site's own (ownLocale),
+// so we don't crawl e.g. /fr/... while scanning a site entered via /en/...
+function isLocaleUrl(rawUrl, ownLocale) {
+  const linkLocale = getLocalePrefix(rawUrl);
+  return linkLocale !== null && linkLocale !== ownLocale;
 }
 
 function normalizePageUrl(rawUrl) {
@@ -460,7 +469,10 @@ async function auditPage(url, serializedChecks, collectLinks = false) {
         document.querySelectorAll("a[href]").forEach((a) => {
           try {
             const u = new URL(a.href);
-            if (u.origin === origin && !a.href.includes("#")) hrefs.add(u.toString());
+            if (u.origin === origin) {
+              u.hash = "";
+              hrefs.add(u.toString());
+            }
           } catch {}
         });
         document.querySelectorAll("form[action]").forEach((f) => {
@@ -564,6 +576,7 @@ app.get("/audit", async (req, res) => {
     } else if (shouldCrawl) {
       // Single URL mode: collect links from homepage and crawl subpages
       const url = urls[0];
+      const ownLocale = getLocalePrefix(url);
       const visited = new Set();
       const queue = [url];
 
@@ -584,7 +597,7 @@ app.get("/audit", async (req, res) => {
 
         if (isFirstPage) {
           for (const link of result.links) {
-            if (isLocaleUrl(link)) continue;
+            if (isLocaleUrl(link, ownLocale)) continue;
             const norm = normalizePageUrl(link);
             if (!visited.has(norm) && !queue.some((q) => normalizePageUrl(q) === norm)) {
               queue.push(link);
@@ -766,7 +779,9 @@ app.get("/manual-scan/bundle.js", (req, res) => {
             return loadIframe(link, 20000).then(function (iframe) {
               if (!iframe) return;
               var win = iframe.contentWindow;
-              if (!win || win.location.origin !== origin) { iframe.remove(); return; }
+              var winOrigin;
+              try { winOrigin = win && win.location.origin; } catch (e) { winOrigin = null; }
+              if (!win || winOrigin !== origin) { iframe.remove(); return; }
               // Remove the iframe only after scanning settles — removing it
               // while axe is still running mid-flight tears down its window
               // and leaves the scan hanging forever.
