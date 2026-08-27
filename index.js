@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -14,11 +15,38 @@ const { buildHtmlReport } = require("./reportTemplate");
 const { attachNetworkCapture } = require("./networkCapture");
 const { customChecks, customRules, CUSTOM_RULE_IDS } = require("./customAxeRules");
 const { renderHomePage } = require("./views/home");
+const logger = require("./logger");
+const { flagIncident } = require("./alerts");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const REPORTS_DIR = path.join(__dirname, "reports");
-const MAX_CRAWL_PAGES = 20;
+// Default depth for a crawl that doesn't specify ?maxPages. Callers can
+// still ask for more per-request (up to ABSOLUTE_MAX_PAGES below).
+const MAX_CRAWL_PAGES = parseInt(process.env.MAX_CRAWL_PAGES) || 20;
+// Hard ceiling no request can exceed regardless of ?maxPages — the actual
+// cost/timeout guardrail, independent of the default above.
+const ABSOLUTE_MAX_PAGES = parseInt(process.env.ABSOLUTE_MAX_PAGES) || 50;
+// Below this, a crawl that was allowed to go deeper (maxPages was higher
+// than what it actually found) probably hit a link-discovery problem
+// rather than genuinely being a 1-4 page site — worth a human checking.
+const LOW_PAGE_YIELD_THRESHOLD = parseInt(process.env.LOW_PAGE_YIELD_THRESHOLD) || 5;
+// A handful of slow-loading pages at the old 60s cap could blow a 20-page
+// crawl's whole budget on their own (3-4 min target). Cut losses fast and
+// count it as a normal per-page failure instead — the rest of the crawl
+// keeps going.
+const PAGE_NAVIGATION_TIMEOUT_MS = parseInt(process.env.PAGE_NAVIGATION_TIMEOUT_MS) || 10000;
+// How many subpages to audit at once during a crawl. Each concurrent page
+// is a separate Chrome renderer process/tab, so this is a memory dial as
+// much as a speed one — every extra slot multiplies against the Lambda's
+// allocated memory (2GB planned in PLAN.md), not just wall-clock time.
+// Keep this conservative and confirm headroom via CloudWatch max-memory-used
+// before raising it; it's an env var specifically so it can be tuned without
+// a redeploy once real page-weight data is in.
+const AUDIT_CONCURRENCY = parseInt(process.env.AUDIT_CONCURRENCY) || 4;
+// How long to wait for a Cloudflare/WAF interstitial to clear client-side
+// before giving up on a page.
+const BOT_CHALLENGE_TIMEOUT_MS = parseInt(process.env.BOT_CHALLENGE_TIMEOUT_MS) || 8000;
 // The public URL this server is reachable at — needed so the manual-scan
 // bundle (loaded from an arbitrary third-party site) knows where to fetch
 // axe-core from and where to POST results back to. Behind a reverse proxy
@@ -37,7 +65,7 @@ app.set("trust proxy", true);
 // after a short idle window so the process doesn't sit there holding
 // memory between scans — the launch cost (~1-2s) is paid again on the
 // next request instead.
-const BROWSER_IDLE_TIMEOUT_MS = 60 * 1000;
+const BROWSER_IDLE_TIMEOUT_MS = parseInt(process.env.BROWSER_IDLE_TIMEOUT_MS) || 60 * 1000;
 
 let browser = null;
 let browserLaunchPromise = null;
@@ -61,7 +89,13 @@ async function launchBrowser() {
       "--disable-gpu",
       "--disable-software-rasterizer",
       "--no-zygote",
-      "--renderer-process-limit=1",
+      // Was pinned to 1 (all tabs sharing a single renderer process), which
+      // silently serialized page loads no matter how many concurrent
+      // auditPage() calls were in flight. Capped to AUDIT_CONCURRENCY
+      // instead of left uncapped, so Chrome itself can't spawn more
+      // renderer processes than our own concurrency pool allows — the pool
+      // is the primary control, this is a backstop.
+      `--renderer-process-limit=${AUDIT_CONCURRENCY}`,
       "--js-flags=--max-old-space-size=512",
       "--disk-cache-size=0",
       "--media-cache-size=0",
@@ -139,9 +173,9 @@ function releaseBrowserSlot() {
     browser = null;
     try {
       await toClose.close();
-      console.log("Closed idle browser instance to free memory.");
+      logger.info("browser-closed-idle");
     } catch (err) {
-      console.warn(`Error closing idle browser: ${err.message}`);
+      logger.warn("browser-close-failed", { error: err.message });
     }
   }, BROWSER_IDLE_TIMEOUT_MS);
 }
@@ -336,7 +370,10 @@ function saveReport(pageResults, requestedUrl) {
 // ---------- Bot / WAF challenge detection ----------
 // Some sites (Cloudflare, Akamai, etc.) show an interstitial JS/CAPTCHA
 // challenge to visitors that look automated instead of the real page.
+// Overridable so a UA fingerprint that starts getting bot-blocked can be
+// swapped out without a redeploy.
 const REALISTIC_USER_AGENT =
+  process.env.SCAN_USER_AGENT ||
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
 const CHALLENGE_TEXT_PATTERNS = [
@@ -353,7 +390,7 @@ async function detectBotChallenge(page, response) {
   const server = headers["server"] || "";
   const vendor = /cloudflare/i.test(server) ? "Cloudflare" : "the site's bot-protection service";
 
-  if (headers["cf-mitigated"]) return vendor;
+  if (headers["cf-mitigated"]) return { vendor, waitable: true };
 
   let text = "";
   try {
@@ -364,15 +401,21 @@ async function detectBotChallenge(page, response) {
     // page may not have a usable DOM yet; fall through to status check below
   }
 
-  if (CHALLENGE_TEXT_PATTERNS.some((p) => p.test(text))) return vendor;
-  if (response.status() === 403 && /cloudflare/i.test(server)) return vendor;
+  if (CHALLENGE_TEXT_PATTERNS.some((p) => p.test(text))) return { vendor, waitable: true };
+  // A bare 403 from a Cloudflare-fronted origin with none of the interactive
+  // challenge markers above (e.g. a plain "403 Forbidden / nginx" error page)
+  // is typically a static WAF/IP block rather than a solvable JS challenge —
+  // waitForChallengeClear's "no challenge text present" check would pass on
+  // it instantly (since it never had challenge text to begin with), so mark
+  // it non-waitable rather than let that false positive through.
+  if (response.status() === 403 && /cloudflare/i.test(server)) return { vendor, waitable: false };
 
   return null;
 }
 
 // Cloudflare's JS/managed challenge typically clears itself client-side
 // within a few seconds once the browser's fingerprint passes inspection.
-async function waitForChallengeClear(page, timeoutMs = 8000) {
+async function waitForChallengeClear(page, timeoutMs = BOT_CHALLENGE_TIMEOUT_MS) {
   try {
     await page.waitForFunction(
       (patterns) => {
@@ -416,10 +459,10 @@ async function auditPage(url, serializedChecks, collectLinks = false) {
     try {
       response = await page.goto(url, {
         waitUntil: ["domcontentloaded", "networkidle2"],
-        timeout: 60000,
+        timeout: PAGE_NAVIGATION_TIMEOUT_MS,
       });
     } catch (navError) {
-      console.warn(`Skipping ${url}: ${navError.message}`);
+      logger.warn("page-navigation-failed", { url, error: navError.message });
       return { failed: true, reason: "navigation-error", detail: navError.message, url };
     }
 
@@ -428,12 +471,12 @@ async function auditPage(url, serializedChecks, collectLinks = false) {
       return { failed: true, reason: "no-response", url };
     }
 
-    const challengeVendor = await detectBotChallenge(page, response);
-    if (challengeVendor) {
-      const cleared = await waitForChallengeClear(page, 8000);
+    const challenge = await detectBotChallenge(page, response);
+    if (challenge) {
+      const cleared = challenge.waitable && (await waitForChallengeClear(page, BOT_CHALLENGE_TIMEOUT_MS));
       if (!cleared) {
-        console.warn(`Bot challenge blocked ${url} (${challengeVendor})`);
-        return { failed: true, reason: "bot-challenge", vendor: challengeVendor, status: response.status(), url };
+        logger.warn("bot-challenge-blocked", { url, vendor: challenge.vendor, status: response.status() });
+        return { failed: true, reason: "bot-challenge", vendor: challenge.vendor, status: response.status(), url };
       }
       // Challenge cleared client-side; re-read the now-real page state.
       finalUrl = page.url();
@@ -499,7 +542,7 @@ async function auditPage(url, serializedChecks, collectLinks = false) {
       links,
     };
   } catch (pageError) {
-    console.warn(`Error on ${url}: ${pageError.message}`);
+    logger.warn("page-audit-failed", { url, error: pageError.message });
     return { failed: true, reason: "unknown", detail: pageError.message, url };
   } finally {
     // The page/target may already be gone (crashed tab, closed window) —
@@ -508,17 +551,37 @@ async function auditPage(url, serializedChecks, collectLinks = false) {
       try {
         await netCapture.detach();
       } catch (err) {
-        console.warn(`Failed to detach network capture for ${url}: ${err.message}`);
+        logger.warn("network-capture-detach-failed", { url, error: err.message });
       }
     }
     if (page) {
       try {
         await page.close();
       } catch (err) {
-        console.warn(`Failed to close page for ${url}: ${err.message}`);
+        logger.warn("page-close-failed", { url, error: err.message });
       }
     }
   }
+}
+
+// Runs `fn` over `items` with at most `concurrency` in flight at once,
+// preserving input order in the returned array. Used instead of
+// Promise.all(items.map(fn)) specifically to keep memory bounded — firing
+// every page open at once would let page count (up to 50, via ?maxPages)
+// dictate how many Chrome renderer processes exist at once, which is what
+// this function exists to prevent.
+async function mapWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    for (let i = nextIndex++; i < items.length; i = nextIndex++) {
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
 }
 
 // ---------- Routes ----------
@@ -532,7 +595,7 @@ app.get("/", (req, res) => {
 //               (crawl defaults to true when omitted, for backwards compatibility.)
 app.get("/audit", async (req, res) => {
   const rawUrl = req.query.url;
-  const maxPages = Math.min(Math.max(parseInt(req.query.maxPages) || MAX_CRAWL_PAGES, 1), 50);
+  const maxPages = Math.min(Math.max(parseInt(req.query.maxPages) || MAX_CRAWL_PAGES, 1), ABSOLUTE_MAX_PAGES);
 
   if (!rawUrl) {
     return res.status(400).json({ success: false, message: "Please provide a URL" });
@@ -540,7 +603,7 @@ app.get("/audit", async (req, res) => {
 
   const urls = Array.isArray(rawUrl) ? rawUrl : [rawUrl];
 
-  console.log(`Received audit request for ${urls.length} URL(s):`, urls);
+  logger.info("audit-request-received", { urlCount: urls.length, urls });
 
   const multiMode = urls.length > 1;
   const crawlParam = req.query.crawl;
@@ -567,45 +630,50 @@ app.get("/audit", async (req, res) => {
   acquireBrowserSlot();
   try {
     if (multiMode) {
-      // Audit each provided URL directly — no subpage crawling
-      for (const url of urls) {
-        const result = await auditPage(url, serializedChecks);
+      // Audit each provided URL directly, concurrently — no subpage
+      // crawling, and no dependency between them, so there's no reason to
+      // do this one at a time.
+      const results = await mapWithConcurrency(urls, AUDIT_CONCURRENCY, (url) => auditPage(url, serializedChecks));
+      for (const result of results) {
         if (result?.failed) failures.push(result);
         else if (result) pageResults.push(result.pageResult);
       }
     } else if (shouldCrawl) {
-      // Single URL mode: collect links from homepage and crawl subpages
+      // Single URL mode: links are only ever collected from the homepage
+      // (never from subpages), so the homepage has to be audited alone
+      // first — but everything after that is a flat, independent list with
+      // no crawl-order dependency, so it's audited concurrently instead of
+      // one page at a time.
       const url = urls[0];
       const ownLocale = getLocalePrefix(url);
-      const visited = new Set();
-      const queue = [url];
 
-      while (queue.length > 0 && pageResults.length < maxPages) {
-        const currentUrl = queue.shift();
-        const normalizedUrl = normalizePageUrl(currentUrl);
+      const homepageResult = await auditPage(url, serializedChecks, true);
+      if (!homepageResult || homepageResult.failed) {
+        if (homepageResult?.failed) failures.push(homepageResult);
+      } else {
+        pageResults.push(homepageResult.pageResult);
 
-        if (visited.has(normalizedUrl)) continue;
-        visited.add(normalizedUrl);
-
-        // Collect links only from the first successfully audited page
-        const isFirstPage = pageResults.length === 0;
-        const result = await auditPage(currentUrl, serializedChecks, isFirstPage);
-        if (!result || result.failed) {
-          if (result?.failed) failures.push(result);
-          continue;
+        const visited = new Set([normalizePageUrl(url)]);
+        const subpageUrls = [];
+        for (const link of homepageResult.links) {
+          if (isLocaleUrl(link, ownLocale)) continue;
+          const norm = normalizePageUrl(link);
+          if (visited.has(norm)) continue;
+          visited.add(norm);
+          subpageUrls.push(link);
+          if (subpageUrls.length >= maxPages - 1) break;
         }
 
-        if (isFirstPage) {
-          for (const link of result.links) {
-            if (isLocaleUrl(link, ownLocale)) continue;
-            const norm = normalizePageUrl(link);
-            if (!visited.has(norm) && !queue.some((q) => normalizePageUrl(q) === norm)) {
-              queue.push(link);
-            }
+        const subpageResults = await mapWithConcurrency(subpageUrls, AUDIT_CONCURRENCY, (subUrl) =>
+          auditPage(subUrl, serializedChecks, false)
+        );
+        for (const result of subpageResults) {
+          if (!result || result.failed) {
+            if (result?.failed) failures.push(result);
+            continue;
           }
+          pageResults.push(result.pageResult);
         }
-
-        pageResults.push(result.pageResult);
       }
     } else {
       // Single URL, crawling disabled: audit just that page
@@ -631,7 +699,26 @@ app.get("/audit", async (req, res) => {
           `or ask the site owner to allowlist this server for automated accessibility testing.`
         : "Failed to load the provided URL(s). The site may be blocking automated browsers or redirecting unexpectedly.";
 
+      await flagIncident("audit-failed", {
+        url: multiMode ? urls : urls[0],
+        reason: botBlocked ? botBlocked.reason : failures[0]?.reason || "unknown",
+        detail: botBlocked ? botBlocked.vendor : failures[0]?.detail,
+        failures: failureDetails,
+      });
+
       return res.status(400).json({ success: false, message, failures: failureDetails });
+    }
+
+    // A crawl that was allowed to go deeper (maxPages > what it found)
+    // but came back thin is likely a link-discovery problem, not a small
+    // site — flag it the same way as a hard failure so it gets checked.
+    if (!multiMode && shouldCrawl && pageResults.length < LOW_PAGE_YIELD_THRESHOLD && maxPages > pageResults.length) {
+      await flagIncident("low-page-yield", {
+        url: urls[0],
+        pagesScanned: pageResults.length,
+        maxPages,
+        failures: failureDetails,
+      });
     }
 
     // Some URLs may have failed (e.g. bot-blocked) even though others
@@ -640,7 +727,8 @@ app.get("/audit", async (req, res) => {
     const reportInfo = saveReport(pageResults, multiMode ? urls : urls[0]);
     res.json({ success: true, ...reportInfo, failures: failureDetails });
   } catch (error) {
-    console.error(error);
+    logger.error("audit-request-crashed", { urls, error: error.message, stack: error.stack });
+    await flagIncident("audit-failed", { url: multiMode ? urls : urls[0], reason: "crash", detail: error.message });
     res.status(500).json({ success: false, error: error.message });
   } finally {
     releaseBrowserSlot();
@@ -874,7 +962,7 @@ app.post("/audit/manual", express.json({ limit: "60mb" }), (req, res) => {
     const reportInfo = saveReport(pageResults, requestedUrl);
     res.json({ success: true, ...reportInfo });
   } catch (error) {
-    console.error(error);
+    logger.error("manual-scan-crashed", { error: error.message, stack: error.stack });
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -925,7 +1013,7 @@ async function start() {
 }
 
 async function shutdown() {
-  console.log("Shutting down...");
+  logger.info("server-shutting-down");
   if (browser) await browser.close();
   process.exit(0);
 }
@@ -934,6 +1022,6 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 start().catch((err) => {
-  console.error("Failed to start server:", err);
+  logger.error("server-start-failed", { error: err.message, stack: err.stack });
   process.exit(1);
 });
