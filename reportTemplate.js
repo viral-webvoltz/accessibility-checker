@@ -649,13 +649,13 @@ function renderPageSection(pageData, pageIdx, customIdSet) {
       </div>
       <div class="panel">
         <div class="panel-hdr">
-          <div class="panel-title">WCAG 2.2 Criteria</div>
+          <div class="panel-title">Audit Summary</div>
           <a class="wcag-link" href="https://www.w3.org/TR/WCAG22/" target="_blank" rel="noopener">ⓘ What is WCAG?</a>
         </div>
         <div class="criteria-list">
           <div class="criteria-row">
             <div class="criteria-icon ic-crit">!</div>
-            <span class="criteria-label">Critical Issues</span>
+            <span class="criteria-label">Violations Found</span>
             <span class="criteria-count cc-crit">${violations.length}</span>
           </div>
           <div class="criteria-row">
@@ -680,7 +680,7 @@ function renderPageSection(pageData, pageIdx, customIdSet) {
     <!-- Tabs -->
     <div class="tabs">
       <button class="tab-btn active" data-tab="violations" data-pi="${pi}">
-        <span class="tc tc-crit">!</span> Critical Issues <span class="tc tc-crit">${violations.length}</span>
+        <span class="tc tc-crit">!</span> Violations <span class="tc tc-crit">${violations.length}</span>
       </button>
       <button class="tab-btn" data-tab="passes" data-pi="${pi}">
         <span class="tc tc-pass">✓</span> Passed Audits <span class="tc tc-pass">${passes.length}</span>
@@ -880,7 +880,8 @@ function buildHtmlReport(report, customRuleIds) {
   ].filter(Boolean);
 
   const summaryHtml = `<div class="summary-text">
-  <div class="summary-heading">AODA / Ontario IASR Accessibility Compliance Report</div>
+  <div class="summary-heading">Accessibility Report Summary</div>
+  <p class="summary-intro">A plain-language overview of this scan &mdash; what was tested, what was found, and what it means for AODA / Ontario IASR compliance.</p>
   <ul class="summary-list">
     <li><strong>Site audited:</strong> ${escapeHtml(domain)} &mdash; <strong>${pages.length}</strong> page${pages.length !== 1 ? "s" : ""} crawled on ${escapeHtml(auditDate)}</li>
     <li><strong>Accessibility violations found:</strong> <span style="color:${totalViolations > 0 ? "#DC2626" : "#16A34A"};font-weight:700">${totalViolations}</span>${violBreakdownParts.length ? " &mdash; " + violBreakdownParts.join(", ") : " &mdash; none detected"}</li>
@@ -891,15 +892,29 @@ function buildHtmlReport(report, customRuleIds) {
   </ul>
 </div>`;
 
-  // Pages nav quick-jump list
+  // Pages nav — violations found per page, broken down by severity
   const pagesNavHtml = pages
     .map((p, i) => {
-      const vCount = ((p.accessibility && p.accessibility.violations) || [])
-        .length;
+      const pageViolations =
+        (p.accessibility && p.accessibility.violations) || [];
+      const vCount = pageViolations.length;
+      const c = pageViolations.filter((v) => v.impact === "critical").length;
+      const s = pageViolations.filter((v) => v.impact === "serious").length;
+      const m = pageViolations.filter((v) => v.impact === "moderate").length;
+      const mi = pageViolations.filter((v) => v.impact === "minor").length;
+      const chips = [
+        c ? `<span class="pnav-chip pnav-chip-critical">${c} critical</span>` : "",
+        s ? `<span class="pnav-chip pnav-chip-serious">${s} serious</span>` : "",
+        m ? `<span class="pnav-chip pnav-chip-moderate">${m} moderate</span>` : "",
+        mi ? `<span class="pnav-chip pnav-chip-minor">${mi} minor</span>` : "",
+      ]
+        .filter(Boolean)
+        .join("");
       return `<a class="pnav-item" href="#page-${i}" onclick="document.getElementById('page-${i}').open=true">
       <span class="pnav-num">${i + 1}</span>
       <span class="pnav-url">${escapeHtml(p.finalUrl || p.url)}</span>
-      <span class="pnav-badge" style="color:${vCount > 0 ? "#DC2626" : "#16A34A"}">${vCount > 0 ? vCount + " issue" + (vCount !== 1 ? "s" : "") : "&#10003; clean"}</span>
+      <span class="pnav-chips">${chips || '<span class="pnav-chip pnav-chip-clean">&#10003; No violations</span>'}</span>
+      <span class="pnav-badge" style="color:${vCount > 0 ? "#DC2626" : "#16A34A"}">${vCount > 0 ? vCount + " total" : "clean"}</span>
     </a>`;
     })
     .join("");
@@ -949,23 +964,37 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:
 
 /* ── Pages nav ── */
 .pnav{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem 1.25rem}
-.pnav-title{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.75rem}
+.pnav-title{font-size:1.05rem;font-weight:700;letter-spacing:-.01em;color:var(--brand-dark);margin-bottom:.3rem}
+.pnav-sub{font-size:.78rem;color:var(--muted);margin-bottom:.85rem}
 .pnav-list{display:flex;flex-direction:column;gap:.3rem}
-.pnav-item{display:flex;align-items:center;gap:.75rem;padding:.4rem .6rem;border-radius:6px;text-decoration:none;color:var(--text);font-size:.82rem;transition:background .12s}
+.pnav-item{display:flex;align-items:center;gap:.75rem;padding:.5rem .6rem;border-radius:6px;text-decoration:none;color:var(--text);font-size:.82rem;transition:background .12s;flex-wrap:wrap}
 .pnav-item:hover{background:#FFF8E6}
 .pnav-num{display:inline-flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;background:var(--brand-dark);color:var(--brand);border-radius:50%;font-size:.68rem;font-weight:700;flex-shrink:0}
-.pnav-url{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.pnav-badge{font-size:.75rem;font-weight:600;white-space:nowrap;margin-left:auto}
+.pnav-url{flex:1;min-width:10rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.pnav-chips{display:flex;align-items:center;gap:.3rem;flex-wrap:wrap}
+.pnav-chip{font-size:.68rem;font-weight:600;border-radius:999px;padding:.15rem .5rem;border:1px solid;white-space:nowrap}
+.pnav-chip-critical{color:#DC2626;background:#FEF2F2;border-color:#FECACA}
+.pnav-chip-serious{color:#EA580C;background:#FFF7ED;border-color:#FED7AA}
+.pnav-chip-moderate{color:#CA8A04;background:#FEFCE8;border-color:#FDE68A}
+.pnav-chip-minor{color:#64748B;background:#F8FAFC;border-color:#CBD5E1}
+.pnav-chip-clean{color:#16A34A;background:#F0FDF4;border-color:#BBF7D0}
+.pnav-badge{font-size:.75rem;font-weight:700;white-space:nowrap;margin-left:auto}
 
 /* ── Textual summary ── */
 .summary-text{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--brand);border-radius:10px;padding:1rem 1.5rem;margin-bottom:1.25rem}
-.summary-heading{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--brand-dark);margin-bottom:.65rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
+.summary-heading{font-size:1.05rem;font-weight:700;letter-spacing:-.01em;color:var(--brand-dark);margin-bottom:.35rem}
+.summary-intro{font-size:.82rem;color:var(--muted);line-height:1.5;margin-bottom:.75rem;padding-bottom:.65rem;border-bottom:1px solid var(--border)}
 .summary-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:.35rem}
 .summary-list li{position:relative;padding-left:1.1rem;font-size:.85rem;line-height:1.55;color:var(--text)}
 .summary-list li::before{content:'•';position:absolute;left:0;color:var(--brand);font-weight:700;font-size:1rem;line-height:1.35}
 .summary-list li strong{color:var(--brand-dark)}
 .summary-list li.summary-legal{margin-top:.3rem;padding-top:.5rem;border-top:1px dashed var(--border);font-size:.8rem;color:var(--muted);padding-left:1.1rem}
 .summary-list li.summary-legal::before{color:#9CA3AF}
+
+/* ── Section heading (detailed findings) ── */
+.section-heading-block{margin:1.75rem 0 1rem;padding-top:.25rem}
+.section-heading{font-size:1.15rem;font-weight:700;letter-spacing:-.01em;color:var(--brand-dark)}
+.section-sub{font-size:.83rem;color:var(--muted);margin-top:.3rem;line-height:1.5;max-width:60rem}
 
 /* ── Page accordion ── */
 .page-accordion{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:.75rem;overflow:hidden}
@@ -1194,12 +1223,17 @@ td.num{text-align:right;font-family:var(--mono)}
       </div>
     </div>
     <div class="pnav">
-      <div class="pnav-title">Pages crawled (${pages.length})</div>
+      <div class="pnav-title">Violations by page</div>
+      <p class="pnav-sub">${pages.length} page${pages.length !== 1 ? "s" : ""} scanned &mdash; click a page to jump to its full breakdown below.</p>
       <div class="pnav-list">${pagesNavHtml}</div>
     </div>
   </div>
 
   <!-- PAGE SECTIONS -->
+  <div class="section-heading-block">
+    <h2 class="section-heading">Detailed Findings by Page</h2>
+    <p class="section-sub">Expand any page below for its full accessibility audit &mdash; a score, every violation with a suggested fix, what passed, and what still needs a human check.</p>
+  </div>
   ${pageSectionsHtml}
 
 </div><!-- /container -->
