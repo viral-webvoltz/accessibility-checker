@@ -32,10 +32,14 @@ const ABSOLUTE_MAX_PAGES = parseInt(process.env.ABSOLUTE_MAX_PAGES) || 50;
 // rather than genuinely being a 1-4 page site — worth a human checking.
 const LOW_PAGE_YIELD_THRESHOLD = parseInt(process.env.LOW_PAGE_YIELD_THRESHOLD) || 5;
 // A handful of slow-loading pages at the old 60s cap could blow a 20-page
-// crawl's whole budget on their own (3-4 min target). Cut losses fast and
-// count it as a normal per-page failure instead — the rest of the crawl
-// keeps going.
-const PAGE_NAVIGATION_TIMEOUT_MS = parseInt(process.env.PAGE_NAVIGATION_TIMEOUT_MS) || 10000;
+// crawl's whole budget on their own (3-4 min target) — but pages are now
+// audited concurrently (AUDIT_CONCURRENCY), so one slow page only occupies
+// one worker slot instead of serializing the whole crawl. 10s proved too
+// aggressive in practice: ordinary sites with continuous background traffic
+// (analytics, chat widgets, ads) often never reach networkidle2 that fast
+// and were failing outright. 30s keeps a real ceiling without flagging
+// normal sites as failures.
+const PAGE_NAVIGATION_TIMEOUT_MS = parseInt(process.env.PAGE_NAVIGATION_TIMEOUT_MS) || 30000;
 // How many subpages to audit at once during a crawl. Each concurrent page
 // is a separate Chrome renderer process/tab, so this is a memory dial as
 // much as a speed one — every extra slot multiplies against the Lambda's
