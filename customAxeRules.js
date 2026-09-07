@@ -50,21 +50,6 @@ const customChecks = [
   // ARIA
   // ============================================================
   {
-    id: "custom-aria-expanded-button-check",
-    evaluate: function (node) {
-      var controls = node.getAttribute("aria-controls") || node.getAttribute("aria-haspopup");
-      if (!controls) return true;
-      return node.getAttribute("aria-expanded") !== null;
-    },
-    metadata: {
-      impact: "moderate",
-      messages: {
-        pass: "Button with aria-controls/aria-haspopup has aria-expanded",
-        fail: "Button controls or has a popup but is missing aria-expanded — screen readers cannot convey the open/closed state",
-      },
-    },
-  },
-  {
     id: "custom-aria-live-region-check",
     evaluate: function (node) {
       var val = node.getAttribute("aria-live");
@@ -79,22 +64,6 @@ const customChecks = [
       },
     },
   },
-  {
-    id: "custom-dialog-modal-check",
-    evaluate: function (node) {
-      var role = node.getAttribute("role");
-      if (role !== "dialog" && role !== "alertdialog") return true;
-      return node.getAttribute("aria-modal") === "true";
-    },
-    metadata: {
-      impact: "moderate",
-      messages: {
-        pass: "Dialog element has aria-modal='true'",
-        fail: "Dialog element is missing aria-modal='true' — screen readers may not confine virtual cursor to the dialog",
-      },
-    },
-  },
-
   // ============================================================
   // FORMS
   // ============================================================
@@ -179,23 +148,6 @@ const customChecks = [
   // ============================================================
   // LINKS
   // ============================================================
-  {
-    id: "custom-generic-link-text-check",
-    evaluate: function (node) {
-      var generic = [
-        "click here","read more","learn more","here","more","link",
-        "this","details","info","information","page","go","open",
-      ];
-      return generic.indexOf(node.textContent.trim().toLowerCase()) === -1;
-    },
-    metadata: {
-      impact: "moderate",
-      messages: {
-        pass: "Link text is descriptive",
-        fail: "Link text is generic (e.g. 'click here') and doesn't describe the destination — a problem for screen reader users navigating by links list",
-      },
-    },
-  },
   {
     id: "custom-new-tab-warning-check",
     evaluate: function (node) {
@@ -318,15 +270,12 @@ const customChecks = [
 // RULES — ties each check ID to a CSS selector + metadata
 // =============================================================
 const customRules = [
-  { id: "custom-aria-expanded-button-check", selector: "button[aria-controls], button[aria-haspopup]", tags: ["custom","best-practice"], metadata: { description: "Ensures buttons that control popups have aria-expanded", help: "Buttons with aria-controls or aria-haspopup must also have aria-expanded to communicate open/closed state" }, any: ["custom-aria-expanded-button-check"], all: [], none: [] },
   { id: "custom-aria-live-region-check", selector: "[aria-live]", tags: ["custom","best-practice"], metadata: { description: "Ensures aria-live attributes use valid values", help: "Valid values are: off, polite, assertive" }, any: ["custom-aria-live-region-check"], all: [], none: [] },
-  { id: "custom-dialog-modal-check", selector: "[role='dialog'], [role='alertdialog']", tags: ["custom","best-practice"], metadata: { description: "Ensures ARIA dialogs have aria-modal='true'", help: "aria-modal confines the screen reader virtual cursor to the dialog content" }, any: ["custom-dialog-modal-check"], all: [], none: [] },
 
   { id: "custom-placeholder-as-label-check", selector: "input[type='text'], input[type='email'], input[type='search'], input[type='tel'], textarea", tags: ["custom","best-practice"], metadata: { description: "Ensures form fields are not labeled solely by placeholder text", help: "Form fields must have a real label, not just placeholder text" }, any: ["custom-placeholder-as-label-check"], all: [], none: [] },
   { id: "custom-error-identification-check", selector: "[aria-invalid='true']", tags: ["custom","wcag2a","wcag331"], metadata: { description: "Fields marked as invalid must have a linked text error message via aria-errormessage or aria-describedby (WCAG 3.3.1)", help: "Add aria-errormessage='error-id' pointing to an element with a descriptive error text, or use aria-describedby" }, any: ["custom-error-identification-check"], all: [], none: [] },
   { id: "custom-error-suggestion-check", selector: "[aria-invalid='true']", tags: ["custom","wcag2aa","wcag333"], metadata: { description: "Error messages must suggest how to correct the mistake when the expected format is known (WCAG 3.3.3)", help: "Include actionable language in error messages such as 'Please enter a valid email address (e.g. name@example.com)'" }, any: ["custom-error-suggestion-check"], all: [], none: [] },
 
-  { id: "custom-generic-link-text-check", selector: "a[href]", tags: ["custom","best-practice"], metadata: { description: "Flags generic non-descriptive link text", help: "Link text should describe the destination without relying on context" }, any: ["custom-generic-link-text-check"], all: [], none: [] },
   { id: "custom-new-tab-warning-check", selector: "a[target='_blank']", tags: ["custom","best-practice","wcag2a"], metadata: { description: "Ensures links opening in a new tab warn the user", help: "Links with target=_blank should indicate they open in a new tab" }, any: ["custom-new-tab-warning-check"], all: [], none: [] },
   { id: "custom-redundant-title-check", selector: "a[title], button[title]", tags: ["custom","best-practice"], metadata: { description: "Flags title attributes that duplicate visible text", help: "Title attribute should add information, not repeat the visible text" }, any: ["custom-redundant-title-check"], all: [], none: [] },
 

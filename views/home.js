@@ -167,9 +167,10 @@ function renderHomePage() {
     </div>
     <div class="stat-grid" id="statGrid"></div>
     <div class="result-actions">
-      <a class="btn-primary" id="downloadReportLink">Download report</a>
+      <a class="btn-primary" id="viewReportLink" target="_blank" rel="noopener">View report</a>
+      <a class="btn-secondary" id="downloadReportLink">Download report</a>
     </div>
-    <p class="download-note">This link works once — the report is removed from the server right after it downloads.</p>
+    <p class="download-note">The download link works once — the report is removed from the server right after it downloads. Viewing doesn't consume it, so you can reopen it until then (or until it expires after 10 minutes).</p>
   </div>
 
   <div class="card error-panel" id="errorPanel" hidden role="alert" tabindex="-1">
@@ -220,6 +221,7 @@ function renderHomePage() {
   var copySnippetBtn = document.getElementById('copySnippetBtn');
   var statGrid = document.getElementById('statGrid');
   var downloadReportLink = document.getElementById('downloadReportLink');
+  var viewReportLink = document.getElementById('viewReportLink');
   var rowTemplate = document.getElementById('urlRowTemplate');
 
   var isScanning = false;
@@ -372,6 +374,7 @@ function renderHomePage() {
       statGrid.appendChild(el);
     });
     downloadReportLink.href = data.report;
+    viewReportLink.href = data.viewReport;
     resultPanel.hidden = false;
     resultPanel.focus();
 

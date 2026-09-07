@@ -51,6 +51,15 @@ const AUDIT_CONCURRENCY = parseInt(process.env.AUDIT_CONCURRENCY) || 4;
 // How long to wait for a Cloudflare/WAF interstitial to clear client-side
 // before giving up on a page.
 const BOT_CHALLENGE_TIMEOUT_MS = parseInt(process.env.BOT_CHALLENGE_TIMEOUT_MS) || 8000;
+// Ceiling for the pre-scan auto-scroll (see autoScrollToBottom below). Caps
+// the worst case on very long/infinite-scroll pages so one page can't stall
+// the whole crawl.
+const SCROLL_TIMEOUT_MS = parseInt(process.env.SCROLL_TIMEOUT_MS) || 15000;
+// After the pre-scan scroll settles, how long to just sit on the page before
+// running axe — gives deferred scripts, animations, and anything the scroll
+// triggered (lazy images, intersection-observer content) a moment to finish
+// mounting instead of racing the audit against it.
+const POST_SCROLL_SETTLE_MS = parseInt(process.env.POST_SCROLL_SETTLE_MS) || 7000;
 // The public URL this server is reachable at — needed so the manual-scan
 // bundle (loaded from an arbitrary third-party site) knows where to fetch
 // axe-core from and where to POST results back to. Behind a reverse proxy
@@ -368,6 +377,10 @@ function saveReport(pageResults, requestedUrl) {
     // This route streams the file to the client, then deletes it from
     // disk — each report can only be downloaded once.
     report: `/reports/${id}/download`,
+    // Renders the same report inline in the browser without consuming it —
+    // can be opened as many times as needed until it expires (download, or
+    // the 10-minute cleanup job, whichever comes first).
+    viewReport: `/reports/${id}/view`,
   };
 }
 
@@ -435,6 +448,106 @@ async function waitForChallengeClear(page, timeoutMs = BOT_CHALLENGE_TIMEOUT_MS)
   }
 }
 
+// Optimizer plugins (WP Rocket's "Delay JavaScript execution", Perfmatters,
+// FlyingPress, etc. — all common on WordPress) hold back <script> tags until
+// the visitor's first real interaction with the page (mousemove, wheel,
+// click, touch, ...) instead of loading them on navigation. On some sites
+// that includes accessibility widgets which patch up real issues at
+// runtime — e.g. adding "(opens in a new tab)" labels to target=_blank
+// links. Our own page.evaluate-driven scrolling doesn't count: it never
+// fires a browser input event, trusted or not, so those scripts never load
+// during an automated scan and their fixes never apply, producing false
+// positives for issues the site has actually already fixed. Puppeteer's
+// mouse APIs go through the CDP input pipeline, which does produce trusted
+// events indistinguishable from a real user, so a touch here is enough to
+// unstick any such delayed script before axe evaluates the page.
+//
+// Deliberately mouse-only, no keyboard: a real (CDP-trusted) Tab keypress
+// actually moves browser focus, and on a site whose first tab stop is a
+// floating widget toggle (chat bubble, accessibility panel, cookie banner)
+// that opens on focus, one Tab press was enough to pop that widget open on
+// every single page of a crawl — producing a wave of "content not in a
+// landmark" / "dialog missing aria-modal" violations for a panel that isn't
+// normally open at all. Mouse movement and a wheel tick satisfy the same
+// delay-JS listeners without touching focus or clicking anything.
+async function triggerDeferredScriptLoad(page) {
+  await page.mouse.move(40, 40);
+  await page.mouse.move(160, 220);
+  await page.mouse.wheel({ deltaY: 1 });
+}
+
+// Some sites only apply certain fixes — e.g. an accessibility widget adding
+// missing "(opens in a new tab)" labels — once a landmark like the footer
+// actually receives focus, rather than baking them into the initial HTML.
+// Focusing a real focusable element inside the footer fires a genuine
+// focus/focusin event so that kind of lazy, interaction-triggered fix gets
+// a chance to run before axe evaluates the DOM. No-op (and harmless) on
+// sites with no such listener. Scoped to an actual link/button/input inside
+// <footer> (never the footer element itself, and never anything outside
+// it) so this can't accidentally focus a page-wide widget toggle the way a
+// blind Tab press can.
+async function focusFooterLandmark(page) {
+  await page.evaluate(() => {
+    const footer = document.querySelector("footer, [role='contentinfo']");
+    if (!footer) return;
+    const focusable = footer.querySelector(
+      'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable && typeof focusable.focus === "function") focusable.focus();
+  });
+}
+
+// Defensive cleanup for the interaction steps above: if hovering/focusing
+// happened to pop open a dialog/menu anyway (a hover-triggered dropdown, a
+// widget that opens itself on any page activity), Escape is the standard
+// way to dismiss it. A no-op if nothing is open, so this is safe to run
+// unconditionally before every audit.
+async function dismissAnyOpenOverlay(page) {
+  await page.keyboard.press("Escape");
+}
+
+// Scrolls the page to the bottom in small smooth steps (rather than jumping
+// straight there) so lazy-loaded images/sections and infinite-scroll content
+// get a chance to mount before axe runs against the DOM — otherwise those
+// elements just don't exist yet and their a11y issues go undetected. Scrolls
+// back to the top afterwards so the audit starts from the page's normal
+// resting scroll position. Best-effort: any failure here shouldn't fail the
+// whole audit, so callers should swallow errors from this.
+async function autoScrollToBottom(page, timeoutMs = SCROLL_TIMEOUT_MS) {
+  await page.evaluate((maxDurationMs) => {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      const stepPx = 200;
+      const stepDelayMs = 100;
+      let lastHeight = document.body.scrollHeight;
+      let stableRounds = 0;
+
+      const timer = setInterval(() => {
+        const timedOut = Date.now() - startedAt > maxDurationMs;
+        window.scrollBy(0, stepPx);
+
+        const currentHeight = document.body.scrollHeight;
+        const reachedBottom = window.innerHeight + window.scrollY >= currentHeight - 2;
+
+        if (currentHeight === lastHeight) {
+          stableRounds += 1;
+        } else {
+          stableRounds = 0;
+          lastHeight = currentHeight;
+        }
+
+        // Stop once we've hit the bottom and the page height has settled
+        // (no more lazy content growing it), or once the timeout guard trips.
+        if ((reachedBottom && stableRounds >= 3) || timedOut) {
+          clearInterval(timer);
+          window.scrollTo(0, 0);
+          resolve();
+        }
+      }, stepDelayMs);
+    });
+  }, timeoutMs);
+}
+
 // ---------- Page auditor ----------
 // Opens a page, runs axe + custom rules, optionally collects same-origin links.
 // Returns { pageResult, finalUrl, links } on success, or
@@ -487,6 +600,39 @@ async function auditPage(url, serializedChecks, collectLinks = false) {
     } else if (!response.ok() && response.status() >= 400) {
       return { failed: true, reason: "http-error", status: response.status(), url };
     }
+
+    try {
+      await triggerDeferredScriptLoad(page);
+    } catch (interactionError) {
+      // Non-fatal: worst case a delay-JS plugin's scripts stay unloaded.
+      logger.warn("page-interaction-trigger-failed", { url, error: interactionError.message });
+    }
+
+    try {
+      await autoScrollToBottom(page);
+    } catch (scrollError) {
+      // Non-fatal: worst case is lazy content stays unloaded for this page.
+      logger.warn("page-autoscroll-failed", { url, error: scrollError.message });
+    }
+
+    try {
+      await focusFooterLandmark(page);
+    } catch (focusError) {
+      // Non-fatal: worst case a footer-focus-triggered fix stays unapplied.
+      logger.warn("page-footer-focus-failed", { url, error: focusError.message });
+    }
+
+    try {
+      await dismissAnyOpenOverlay(page);
+    } catch (dismissError) {
+      // Non-fatal: worst case a stray overlay stays open for this page.
+      logger.warn("page-dismiss-overlay-failed", { url, error: dismissError.message });
+    }
+
+    // Let the page sit for a few seconds post-scroll before auditing — gives
+    // anything the scroll/interaction triggered (lazy images, animations,
+    // deferred scripts) time to actually finish mounting.
+    await new Promise((resolve) => setTimeout(resolve, POST_SCROLL_SETTLE_MS));
 
     await page.evaluate(axeSource);
 
@@ -846,12 +992,101 @@ app.get("/manual-scan/bundle.js", (req, res) => {
     return results;
   }
 
-  function scanWindow(win, url, axeSourceCode) {
-    win.eval(axeSourceCode);
-    win.axe.configure({ checks: reconstructedChecks(), rules: RULES });
-    return win.axe.run().then(function (results) {
-      return { url: url, finalUrl: win.location.href, accessibility: trimPassNodeDetail(results) };
+  // Mirrors the server-side crawler's pre-scan scroll (index.js
+  // autoScrollToBottom): steps smoothly to the bottom so lazy-loaded content
+  // mounts before axe runs, then returns to the top. Best-effort — a stuck
+  // scroll shouldn't block the scan, so it's capped by a timeout.
+  function autoScrollToBottom(win, maxDurationMs) {
+    return new Promise(function (resolve) {
+      var doc = win.document;
+      var startedAt = Date.now();
+      var stepPx = 200;
+      var stepDelayMs = 100;
+      var lastHeight = doc.body ? doc.body.scrollHeight : 0;
+      var stableRounds = 0;
+
+      var timer = win.setInterval(function () {
+        var timedOut = Date.now() - startedAt > maxDurationMs;
+        win.scrollBy(0, stepPx);
+
+        var currentHeight = doc.body ? doc.body.scrollHeight : 0;
+        var reachedBottom = win.innerHeight + win.scrollY >= currentHeight - 2;
+
+        if (currentHeight === lastHeight) {
+          stableRounds += 1;
+        } else {
+          stableRounds = 0;
+          lastHeight = currentHeight;
+        }
+
+        if ((reachedBottom && stableRounds >= 3) || timedOut) {
+          win.clearInterval(timer);
+          win.scrollTo(0, 0);
+          resolve();
+        }
+      }, stepDelayMs);
     });
+  }
+
+  function wait(win, ms) {
+    return new Promise(function (resolve) { win.setTimeout(resolve, ms); });
+  }
+
+  // Mirrors the server-side crawler's triggerDeferredScriptLoad (index.js):
+  // best-effort nudge for delay-JS optimizer plugins (WP Rocket etc.) that
+  // hold scripts back until a user interaction event fires. Synthetic
+  // dispatchEvent calls are untrusted, so this won't unstick a listener
+  // that checks event.isTrusted, but most delay-JS integrations don't.
+  // Mouse-only (no keydown/click) — see the server-side comment for why: a
+  // stray keydown/click can pop open a widget toggle that listens for any
+  // page activity, flooding every scanned page with violations from a panel
+  // that isn't normally open at all.
+  function triggerDeferredScriptLoad(win) {
+    try {
+      ["mousemove", "wheel"].forEach(function (type) {
+        win.dispatchEvent(new win.Event(type, { bubbles: true }));
+      });
+    } catch (e) {}
+  }
+
+  // Mirrors the server-side crawler's focusFooterLandmark (index.js): some
+  // sites only apply certain fixes once the footer receives focus. Scoped to
+  // an actual link/button/input inside <footer>, never the footer itself or
+  // anything outside it.
+  function focusFooterLandmark(win) {
+    try {
+      var footer = win.document.querySelector("footer, [role='contentinfo']");
+      if (!footer) return;
+      var focusable = footer.querySelector(
+        'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable && typeof focusable.focus === "function") focusable.focus();
+    } catch (e) {}
+  }
+
+  // Mirrors the server-side crawler's dismissAnyOpenOverlay (index.js):
+  // defensive Escape in case any of the above popped something open anyway.
+  function dismissAnyOpenOverlay(win) {
+    try {
+      win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    } catch (e) {}
+  }
+
+  function scanWindow(win, url, axeSourceCode) {
+    triggerDeferredScriptLoad(win);
+    return autoScrollToBottom(win, 15000).catch(function () {})
+      .then(function () { focusFooterLandmark(win); })
+      .then(function () { dismissAnyOpenOverlay(win); })
+      // Let anything the interaction/scroll triggered (lazy images, deferred
+      // scripts) finish mounting before axe runs.
+      .then(function () { return wait(win, 7000); })
+      .then(function () {
+        win.eval(axeSourceCode);
+        win.axe.configure({ checks: reconstructedChecks(), rules: RULES });
+        return win.axe.run().then(function (results) {
+          return { url: url, finalUrl: win.location.href, accessibility: trimPassNodeDetail(results) };
+        });
+      });
   }
 
   function run(axeSourceCode) {
@@ -898,12 +1133,19 @@ app.get("/manual-scan/bundle.js", (req, res) => {
         statusEl.remove();
         if (data && data.success) {
           var link = toast("Scan complete \\u2014 " + pages.length + " page(s).");
+          var viewLink = document.createElement("a");
+          viewLink.href = ORIGIN + data.viewReport;
+          viewLink.target = "_blank";
+          viewLink.rel = "noopener";
+          viewLink.textContent = "View report";
+          viewLink.style.cssText = "display:block;margin-top:6px;color:#93c5fd;font-weight:600";
+          link.appendChild(viewLink);
           var a = document.createElement("a");
           a.href = ORIGIN + data.report;
           a.target = "_blank";
           a.rel = "noopener";
           a.textContent = "Download report";
-          a.style.cssText = "display:block;margin-top:6px;color:#93c5fd;font-weight:600";
+          a.style.cssText = "display:block;margin-top:2px;color:#93c5fd;font-weight:600";
           link.appendChild(a);
         } else {
           toast("Scan failed: " + (data && data.message ? data.message : "unknown error"), true);
@@ -997,6 +1239,19 @@ app.get("/reports/:id/download", (req, res) => {
   res.download(htmlPath, downloadName, () => {
     fs.unlink(htmlPath, () => {});
   });
+});
+
+// Renders the report inline instead of downloading it, and — unlike
+// /download — doesn't delete it afterwards, so it can be opened repeatedly
+// (e.g. re-checked in a second tab) until it's downloaded or expires via
+// cleanupOldReports.
+app.get("/reports/:id/view", (req, res) => {
+  const id = path.basename(req.params.id);
+  const htmlPath = path.join(REPORTS_DIR, `${id}.html`);
+  if (!fs.existsSync(htmlPath)) {
+    return res.status(404).send("Report not found — it may have already been downloaded and removed from the server.");
+  }
+  res.type("html").sendFile(htmlPath);
 });
 
 // ---------- Startup / shutdown ----------
