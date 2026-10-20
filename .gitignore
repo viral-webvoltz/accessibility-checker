@@ -3,4 +3,4 @@ reports/
 logs/
 .env
 .env.*
-!.env.example
+!.env.exampledist/
