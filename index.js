@@ -19,7 +19,7 @@ const logger = require("./logger");
 const { flagIncident } = require("./alerts");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 const REPORTS_DIR = path.join(__dirname, "reports");
 // Default depth for a crawl that doesn't specify ?maxPages. Callers can
 // still ask for more per-request (up to ABSOLUTE_MAX_PAGES below).
