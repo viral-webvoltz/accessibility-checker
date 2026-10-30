@@ -35,8 +35,9 @@ const BOT_CHALLENGE_TIMEOUT_MS = parseInt(process.env.BOT_CHALLENGE_TIMEOUT_MS) 
 const SCROLL_TIMEOUT_MS = parseInt(process.env.SCROLL_TIMEOUT_MS) || 15000;
 // Pause after scrolling so lazy content and deferred scripts finish mounting.
 const POST_SCROLL_SETTLE_MS = parseInt(process.env.POST_SCROLL_SETTLE_MS) || 7000;
-// Max element screenshots per page (one per highlighted violation node).
-const ELEMENT_SCREENSHOT_LIMIT = parseInt(process.env.ELEMENT_SCREENSHOT_LIMIT) || 12;
+// Max element screenshots per page. Every violation gets one first, then
+// extras until this runs out.
+const ELEMENT_SCREENSHOT_LIMIT = parseInt(process.env.ELEMENT_SCREENSHOT_LIMIT) || 30;
 // Max nodes per violation sent to the frontend (the HTML report keeps all).
 const CLIENT_NODES_PER_VIOLATION = 15;
 
@@ -347,47 +348,102 @@ async function capturePageScreenshot(page) {
 
 const IMPACT_RANK = { critical: 4, serious: 3, moderate: 2, minor: 1 };
 
-// Screenshots the offending element for the most severe violations, with a
-// red outline drawn inside its box. Stores the image on node.screenshot.
+// Screenshots offending elements, highlighted with a red outline and a bit
+// of surrounding context. Pass 1 tries to get one image for *every*
+// violation (walking its nodes until one is capturable); pass 2 adds a few
+// extra examples per violation while the page budget lasts. Images are
+// stored on node.screenshot; nodes that can't be shown (hidden, zero-size,
+// inside an iframe/shadow DOM, in <head>) get node.screenshotSkipped.
+const SHOT_PADDING = 24;
+const SHOT_MAX_HEIGHT = 480;
+const EXTRA_SHOTS_PER_VIOLATION = 2;
+const ATTEMPTS_PER_VIOLATION = 6;
+
+async function screenshotNode(page, node) {
+  if (!Array.isArray(node.target) || node.target.length !== 1 || typeof node.target[0] !== "string") {
+    node.screenshotSkipped = "nested";
+    return false;
+  }
+  let handle = null;
+  try {
+    handle = await page.$(node.target[0]);
+    if (!handle) return false;
+    await handle.scrollIntoView().catch(() => {});
+    const box = await handle.boundingBox();
+    if (!box || box.width < 2 || box.height < 2) {
+      node.screenshotSkipped = "not-visible";
+      return false;
+    }
+    const [pageLeft, pageTop] = await page.evaluate(() => [window.visualViewport.pageLeft, window.visualViewport.pageTop]);
+    const padX = Math.min(SHOT_PADDING, box.x + pageLeft);
+    const padY = Math.min(SHOT_PADDING, box.y + pageTop);
+
+    await handle.evaluate((el) => {
+      el.__a11yPrev = [el.style.outline, el.style.outlineOffset, el.style.boxShadow];
+      el.style.outline = "3px solid #e11d48";
+      el.style.outlineOffset = "2px";
+      el.style.boxShadow = "0 0 0 7px rgba(225,29,72,.25)";
+    });
+    // clip is relative to the element's own box here.
+    const data = await handle.screenshot({
+      type: "jpeg",
+      quality: 60,
+      encoding: "base64",
+      scrollIntoView: false,
+      clip: {
+        x: -padX,
+        y: -padY,
+        width: Math.min(box.width + padX + SHOT_PADDING, VIEWPORT.width),
+        height: Math.min(box.height + padY + SHOT_PADDING, SHOT_MAX_HEIGHT),
+      },
+    });
+    node.screenshot = `data:image/jpeg;base64,${data}`;
+    return true;
+  } catch {
+    node.screenshotSkipped = "not-visible";
+    return false;
+  } finally {
+    if (handle) {
+      await handle
+        .evaluate((el) => {
+          if (el.__a11yPrev) [el.style.outline, el.style.outlineOffset, el.style.boxShadow] = el.__a11yPrev;
+        })
+        .catch(() => {});
+      await handle.dispose().catch(() => {});
+    }
+  }
+}
+
 async function captureViolationScreenshots(page, violations) {
   const ordered = [...violations].sort((a, b) => (IMPACT_RANK[b.impact] || 0) - (IMPACT_RANK[a.impact] || 0));
   let taken = 0;
+  const firstShot = new Map();
 
-  for (const violation of ordered) {
-    for (const node of violation.nodes.slice(0, 2)) {
-      if (taken >= ELEMENT_SCREENSHOT_LIMIT) return;
-      // Skip targets inside iframes / shadow DOM (nested selector arrays).
-      if (!Array.isArray(node.target) || node.target.length !== 1 || typeof node.target[0] !== "string") continue;
-
-      let handle = null;
-      try {
-        handle = await page.$(node.target[0]);
-        if (!handle) continue;
-        const box = await handle.boundingBox();
-        if (!box || box.width < 4 || box.height < 4 || box.width * box.height > VIEWPORT.width * VIEWPORT.height) continue;
-
-        await handle.evaluate((el) => {
-          el.__a11yPrevOutline = [el.style.outline, el.style.outlineOffset];
-          el.style.outline = "3px solid #e11d48";
-          el.style.outlineOffset = "-3px";
-        });
-        const data = await handle.screenshot({ type: "jpeg", quality: 65, encoding: "base64" });
-        node.screenshot = `data:image/jpeg;base64,${data}`;
+  // Pass 1: one image per violation.
+  for (const v of ordered) {
+    if (taken >= ELEMENT_SCREENSHOT_LIMIT) break;
+    for (let i = 0; i < Math.min(v.nodes.length, ATTEMPTS_PER_VIOLATION); i++) {
+      if (await screenshotNode(page, v.nodes[i])) {
+        firstShot.set(v, i);
         taken++;
-      } catch {
-        // Element detached, hidden, or zero-size — just skip the image.
-      } finally {
-        if (handle) {
-          await handle
-            .evaluate((el) => {
-              if (el.__a11yPrevOutline) [el.style.outline, el.style.outlineOffset] = el.__a11yPrevOutline;
-            })
-            .catch(() => {});
-          await handle.dispose().catch(() => {});
-        }
+        break;
       }
     }
   }
+
+  // Pass 2: a couple more examples per violation.
+  for (const v of ordered) {
+    const start = firstShot.has(v) ? firstShot.get(v) + 1 : ATTEMPTS_PER_VIOLATION;
+    let extras = 0;
+    for (let i = start; i < Math.min(v.nodes.length, CLIENT_NODES_PER_VIOLATION); i++) {
+      if (taken >= ELEMENT_SCREENSHOT_LIMIT || extras >= EXTRA_SHOTS_PER_VIOLATION) break;
+      if (await screenshotNode(page, v.nodes[i])) {
+        taken++;
+        extras++;
+      }
+    }
+  }
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
 }
 
 // ---------- Client-facing page summary ----------
@@ -439,6 +495,7 @@ function toClientPage(pageResult) {
           html: truncate(n.html, 600),
           failureSummary: n.failureSummary,
           screenshot: n.screenshot || null,
+          screenshotSkipped: n.screenshotSkipped || null,
         })),
       }))
       .sort((x, y) => (IMPACT_RANK[y.impact] || 0) - (IMPACT_RANK[x.impact] || 0)),

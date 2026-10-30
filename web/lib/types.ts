@@ -5,6 +5,7 @@ export interface ViolationNode {
   html: string;
   failureSummary?: string;
   screenshot: string | null;
+  screenshotSkipped?: "nested" | "not-visible" | null;
 }
 
 export interface Violation {

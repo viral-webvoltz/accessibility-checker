@@ -7,13 +7,15 @@ interface Props {
   label: string;
   size?: "lg" | "md" | "sm";
   delayMs?: number;
+  note?: string;
 }
 
 // Circular score ring that fills and counts up from 0 when it mounts.
 // Remount it (change its `key`) to replay the animation.
-export function ScoreGauge({ score, label, size = "md", delayMs = 0 }: Props) {
+export function ScoreGauge({ score, label, size = "md", delayMs = 0, note }: Props) {
   const animated = useCountUp(score, 1500, delayMs);
-  const tone = scoreTone(score);
+  // Colour follows the animated number so it shifts red → amber → green as it climbs.
+  const tone = scoreTone(Math.round(animated));
   const r = 52;
   const circumference = 2 * Math.PI * r;
   const offset = circumference * (1 - animated / 100);
@@ -35,7 +37,10 @@ export function ScoreGauge({ score, label, size = "md", delayMs = 0 }: Props) {
           {Math.round(animated)}
         </text>
       </svg>
-      <figcaption>{label}</figcaption>
+      <figcaption>
+        {label}
+        {note && <span className="gauge-note">{note}</span>}
+      </figcaption>
     </figure>
   );
 }

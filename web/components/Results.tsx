@@ -1,15 +1,13 @@
 "use client";
-import { useMemo, useState } from "react";
-import type { Failure, ScannedPage } from "@/lib/types";
-import { hostOf, pathOf } from "@/lib/format";
+import { useMemo, useRef, useState } from "react";
+import type { Failure, Impact, ScannedPage } from "@/lib/types";
+import { IMPACT_LABEL, hostOf, pathOf, scoreTone } from "@/lib/format";
 import { ScoreGauge } from "./ScoreGauge";
 import { CountUp } from "./CountUp";
 import { BrowserFrame } from "./BrowserFrame";
 import { ViolationList } from "./ViolationList";
 import { PerformancePanel } from "./PerformancePanel";
 import { PillSwitch } from "./PillSwitch";
-
-type View = "accessibility" | "performance";
 
 interface Props {
   pages: ScannedPage[];
@@ -19,44 +17,62 @@ interface Props {
   onReset: () => void;
 }
 
+const IMPACTS: Impact[] = ["critical", "serious", "moderate", "minor"];
+
 function avg(nums: number[]) {
-  return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : 0;
+  return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null;
+}
+
+// Score once every automated violation is fixed: those rules become passes,
+// so only "needs review" items keep it below 100. Same formula as the report.
+export function fixedScore(p: ScannedPage) {
+  const { passes, violations, incomplete } = p.counts;
+  const total = passes + violations + incomplete;
+  return total === 0 ? 100 : Math.round(((passes + violations) / total) * 100);
 }
 
 export function Results({ pages, failures, report, durationMs, onReset }: Props) {
-  const [view, setView] = useState<View>("accessibility");
+  const [fixed, setFixed] = useState(false);
   const [selected, setSelected] = useState(0);
-  // Bumped on every toggle so the gauges remount and animate up again.
-  const [replay, setReplay] = useState(0);
+  const detailRef = useRef<HTMLDivElement>(null);
+  const multi = pages.length > 1;
   const page = pages[Math.min(selected, pages.length - 1)];
 
   const totals = useMemo(() => {
-    const t = { critical: 0, serious: 0, moderate: 0, minor: 0, passes: 0, elements: 0 };
+    const t = { critical: 0, serious: 0, moderate: 0, minor: 0, passes: 0, elements: 0, violations: 0 };
     for (const p of pages) {
-      t.critical += p.counts.critical;
-      t.serious += p.counts.serious;
-      t.moderate += p.counts.moderate;
-      t.minor += p.counts.minor;
+      for (const k of IMPACTS) t[k] += p.counts[k];
       t.passes += p.counts.passes;
       t.elements += p.counts.affectedElements;
+      t.violations += p.counts.violations;
     }
     return t;
   }, [pages]);
 
-  const a11yScore = pages.length > 1 ? avg(pages.map((p) => p.score)) : page.score;
-  const perfScores = pages.map((p) => p.performance?.score).filter((s): s is number => typeof s === "number");
-  const perfScore = pages.length > 1 ? avg(perfScores) : page.performance?.score ?? 0;
+  // Issues grouped by rule across every page.
+  const siteIssues = useMemo(() => {
+    const map = new Map<string, { id: string; help: string; impact: Impact; pages: number; elements: number }>();
+    for (const p of pages) {
+      for (const v of p.violations) {
+        const row = map.get(v.id) || { id: v.id, help: v.help, impact: v.impact, pages: 0, elements: 0 };
+        row.pages += 1;
+        row.elements += v.nodeCount;
+        map.set(v.id, row);
+      }
+    }
+    const rank = { critical: 4, serious: 3, moderate: 2, minor: 1 };
+    return [...map.values()].sort((a, b) => rank[b.impact] - rank[a.impact] || b.pages - a.pages);
+  }, [pages]);
 
-  const switchView = (v: View) => {
-    setView(v);
-    setReplay((n) => n + 1);
-  };
+  const currentA11y = avg(pages.map((p) => p.score)) ?? 0;
+  const fixedA11y = avg(pages.map(fixedScore)) ?? 100;
+  const a11yShown = fixed ? fixedA11y : currentA11y;
+  const perfScore = avg(pages.map((p) => p.performance?.score).filter((s): s is number => typeof s === "number"));
 
   const download = () => {
     if (!report) return;
-    const blob = new Blob([report.html], { type: "text/html" });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = URL.createObjectURL(new Blob([report.html], { type: "text/html" }));
     a.download = report.filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -64,16 +80,20 @@ export function Results({ pages, failures, report, durationMs, onReset }: Props)
 
   const openReport = () => {
     if (!report) return;
-    const url = URL.createObjectURL(new Blob([report.html], { type: "text/html" }));
-    window.open(url, "_blank", "noopener");
+    window.open(URL.createObjectURL(new Blob([report.html], { type: "text/html" })), "_blank", "noopener");
+  };
+
+  const selectPage = (i: number) => {
+    setSelected(i);
+    requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
 
   return (
-    <section className="results" aria-labelledby="results-title">
+    <section className={`results${fixed ? " is-fixed" : ""}`} aria-labelledby="results-title">
       <div className="results-head">
         <div>
           <p className="eyebrow">
-            Scan complete · {pages.length} page{pages.length === 1 ? "" : "s"} · {Math.round(durationMs / 1000)}s
+            Scan complete · {pages.length} page{multi ? "s" : ""} · {Math.round(durationMs / 1000)}s
           </p>
           <h2 id="results-title">{hostOf(pages[0].finalUrl || pages[0].url)}</h2>
         </div>
@@ -94,51 +114,56 @@ export function Results({ pages, failures, report, durationMs, onReset }: Props)
         </div>
       </div>
 
-      <PillSwitch
-        on={view === "performance"}
-        onChange={(on) => switchView(on ? "performance" : "accessibility")}
-        title="See how your site performs ⚡"
-        hint={view === "performance" ? "Showing performance scores" : "Showing accessibility scores"}
-      />
-
-      <div className="card overview" key={`${view}-${replay}`}>
-        <ScoreGauge
-          score={view === "accessibility" ? a11yScore : perfScore}
-          label={view === "accessibility" ? "Accessibility score" : "Performance score"}
-          size="lg"
+      {/* ---------- Score hero with the "what if it was fixed" switch ---------- */}
+      <div className="card score-hero">
+        <PillSwitch
+          on={fixed}
+          onChange={setFixed}
+          title="See your score with every accessibility issue fixed 🚀"
+          hint={
+            fixed
+              ? `Accessibility score goes from ${currentA11y} to ${fixedA11y} once the ${siteIssues.length} issue type${siteIssues.length === 1 ? "" : "s"} below are fixed.`
+              : "Turn it on to see the score after fixes."
+          }
         />
-        {view === "accessibility" ? (
+
+        <div className="score-row">
+          <div className="score-main">
+            <ScoreGauge
+              score={a11yShown}
+              label={fixed ? "Accessibility after fixes" : "Accessibility"}
+              size="lg"
+              note={fixed && fixedA11y > currentA11y ? `+${fixedA11y - currentA11y} points` : undefined}
+            />
+          </div>
+          {perfScore !== null && (
+            <div className="score-main">
+              <ScoreGauge score={perfScore} label="Performance" size="lg" delayMs={150} />
+            </div>
+          )}
           <dl className="sev-grid">
-            {(["critical", "serious", "moderate", "minor"] as const).map((k, i) => (
+            {IMPACTS.map((k, i) => (
               <div key={k} className={`sev sev-${k}`}>
-                <dt>{k[0].toUpperCase() + k.slice(1)}</dt>
+                <dt>{IMPACT_LABEL[k]}</dt>
                 <dd>
-                  <CountUp value={totals[k]} delayMs={i * 100} />
+                  <CountUp value={fixed ? 0 : totals[k]} delayMs={i * 90} />
                 </dd>
               </div>
             ))}
             <div className="sev sev-pass">
               <dt>Checks passed</dt>
               <dd>
-                <CountUp value={totals.passes} delayMs={400} />
+                <CountUp value={fixed ? totals.passes + totals.violations : totals.passes} delayMs={360} />
               </dd>
             </div>
             <div className="sev">
               <dt>Elements affected</dt>
               <dd>
-                <CountUp value={totals.elements} delayMs={500} />
+                <CountUp value={fixed ? 0 : totals.elements} delayMs={450} />
               </dd>
             </div>
           </dl>
-        ) : (
-          <div className="overview-copy">
-            <p>
-              How fast the {pages.length > 1 ? "pages load" : "page loads"} on desktop: first paint, the main content,
-              how long the page is frozen by scripts, and how much it jumps around.
-            </p>
-            <p className="muted small">90+ is good · 50–89 needs work · under 50 is poor</p>
-          </div>
-        )}
+        </div>
       </div>
 
       {failures.length > 0 && (
@@ -148,59 +173,140 @@ export function Results({ pages, failures, report, durationMs, onReset }: Props)
         </p>
       )}
 
-      <div className={pages.length > 1 ? "results-layout" : ""}>
-        {pages.length > 1 && (
-          <nav className="page-nav" aria-label="Scanned pages">
-            {pages.map((p, i) => (
-              <button key={p.url} type="button" aria-current={i === selected ? "page" : undefined} onClick={() => setSelected(i)}>
-                <span className="page-nav-path">{pathOf(p.finalUrl || p.url)}</span>
-                <span className={`page-nav-score tone-${(view === "accessibility" ? p.score : p.performance?.score ?? 0) >= 90 ? "good" : (view === "accessibility" ? p.score : p.performance?.score ?? 0) >= 50 ? "ok" : "bad"}`}>
-                  {view === "accessibility" ? p.score : p.performance?.score ?? "—"}
-                </span>
-              </button>
-            ))}
-          </nav>
-        )}
-
-        <div className="card page-detail">
-          <div className="page-detail-head">
-            <BrowserFrame url={page.finalUrl || page.url}>
-              {page.screenshot ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={page.screenshot} alt={`Screenshot of ${page.title || page.url}`} />
-              ) : (
-                <div className="frame-placeholder">No screenshot</div>
-              )}
-            </BrowserFrame>
-            <div>
-              <h3>{page.title || pathOf(page.url)}</h3>
-              <p className="muted small break">{page.finalUrl || page.url}</p>
-              <div className="mini-gauges" key={`${view}-${replay}-${selected}`}>
-                <ScoreGauge score={page.score} label="Accessibility" size="sm" />
-                {page.performance && <ScoreGauge score={page.performance.score} label="Performance" size="sm" delayMs={120} />}
-              </div>
-              <p className="muted small">
-                {page.counts.violations} issue types · {page.counts.affectedElements} elements affected · {page.counts.passes} checks passed
-              </p>
+      {/* ---------- Multi-page: all pages + issues across the site ---------- */}
+      {multi && (
+        <div className="site-grid">
+          <div className="card">
+            <h3 className="section-title">All pages</h3>
+            <div className="table-scroll">
+              <table className="pages-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Page</th>
+                    <th scope="col">Accessibility</th>
+                    <th scope="col">Performance</th>
+                    <th scope="col">Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pages.map((p, i) => {
+                    const a = fixed ? fixedScore(p) : p.score;
+                    return (
+                      <tr key={p.url} className={i === selected ? "is-selected" : ""}>
+                        <th scope="row">
+                          <button type="button" className="row-link" onClick={() => selectPage(i)} aria-current={i === selected ? "true" : undefined}>
+                            {pathOf(p.finalUrl || p.url)}
+                          </button>
+                        </th>
+                        <td>
+                          <span className={`score-pill tone-${scoreTone(a)}`}>{a}</span>
+                        </td>
+                        <td>
+                          {p.performance ? (
+                            <span className={`score-pill tone-${scoreTone(p.performance.score)}`}>{p.performance.score}</span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>
+                          <span className="sev-dots">
+                            {IMPACTS.map((k) =>
+                              p.counts[k] ? (
+                                <span key={k} className={`sev-dot sev-${k}`} title={`${p.counts[k]} ${k}`}>
+                                  {fixed ? 0 : p.counts[k]}
+                                </span>
+                              ) : null
+                            )}
+                            {p.counts.violations === 0 && <span className="muted">none</span>}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
 
-          <div key={`${view}-${replay}-${selected}-body`}>
-            {view === "accessibility" ? (
-              <>
-                <h4 className="section-title">
-                  Issues found <span className="muted">({page.counts.violations})</span>
-                </h4>
-                <ViolationList violations={page.violations} />
-              </>
+          <div className="card">
+            <h3 className="section-title">Issues across the site</h3>
+            {siteIssues.length === 0 ? (
+              <p className="empty-good">No automated issues on any page.</p>
             ) : (
-              <>
-                <h4 className="section-title">Core metrics</h4>
-                <PerformancePanel perf={page.performance} />
-              </>
+              <ul className="site-issues">
+                {siteIssues.map((row) => (
+                  <li key={row.id} className={fixed ? "is-fixed" : ""}>
+                    <span className={`badge badge-${fixed ? "fixed" : row.impact}`}>{fixed ? "Fixed" : IMPACT_LABEL[row.impact]}</span>
+                    <span className="site-issue-title">{row.help}</span>
+                    <span className="muted small">
+                      {row.pages}/{pages.length} pages · {row.elements} elements
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>
+      )}
+
+      {/* ---------- Full detail for one page: screenshot, performance, issues ---------- */}
+      <div className="card page-detail" ref={detailRef}>
+        {multi && (
+          <label className="page-picker">
+            <span>Page</span>
+            <select value={selected} onChange={(e) => setSelected(Number(e.target.value))}>
+              {pages.map((p, i) => (
+                <option key={p.url} value={i}>
+                  {pathOf(p.finalUrl || p.url)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <div className="page-detail-head">
+          <BrowserFrame url={page.finalUrl || page.url}>
+            {page.screenshot ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={page.screenshot} alt={`Screenshot of ${page.title || page.url}`} />
+            ) : (
+              <div className="frame-placeholder">No screenshot</div>
+            )}
+          </BrowserFrame>
+          <div>
+            <h3>{page.title || pathOf(page.url)}</h3>
+            <p className="muted small break">{page.finalUrl || page.url}</p>
+            <div className="mini-gauges">
+              <ScoreGauge score={fixed ? fixedScore(page) : page.score} label="Accessibility" size="sm" />
+              {page.performance && <ScoreGauge score={page.performance.score} label="Performance" size="sm" delayMs={120} />}
+            </div>
+            <p className="muted small">
+              {page.counts.violations} issue types · {page.counts.affectedElements} elements · {page.counts.passes} checks passed ·{" "}
+              {page.counts.incomplete} need review
+            </p>
+          </div>
+        </div>
+
+        <h4 className="section-title">Performance</h4>
+        <PerformancePanel perf={page.performance} />
+
+        <h4 className="section-title spaced">
+          Accessibility issues <span className="muted">({page.counts.violations})</span>
+        </h4>
+        <ViolationList violations={page.violations} fixed={fixed} />
+
+        {page.passes.length > 0 && (
+          <details className="passes">
+            <summary>
+              <span className="badge badge-fixed">Passed</span> {page.passes.length} checks passed on this page
+            </summary>
+            <ul>
+              {page.passes.map((p) => (
+                <li key={p.id}>✓ {p.help}</li>
+              ))}
+            </ul>
+          </details>
+        )}
       </div>
     </section>
   );

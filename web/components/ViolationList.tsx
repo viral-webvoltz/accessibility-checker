@@ -5,7 +5,7 @@ import { IMPACT_LABEL, wcagLabels } from "@/lib/format";
 
 const IMPACTS: Impact[] = ["critical", "serious", "moderate", "minor"];
 
-export function ViolationList({ violations }: { violations: Violation[] }) {
+export function ViolationList({ violations, fixed = false }: { violations: Violation[]; fixed?: boolean }) {
   const [filter, setFilter] = useState<Impact | "all">("all");
   const shown = filter === "all" ? violations : violations.filter((v) => v.impact === filter);
 
@@ -31,21 +31,22 @@ export function ViolationList({ violations }: { violations: Violation[] }) {
       </div>
 
       <ul className="issues">
-        {shown.map((v) => (
-          <IssueItem key={v.id} v={v} />
+        {shown.map((v, i) => (
+          <IssueItem key={v.id} v={v} fixed={fixed} index={i} />
         ))}
       </ul>
     </div>
   );
 }
 
-function IssueItem({ v }: { v: Violation }) {
+function IssueItem({ v, fixed, index }: { v: Violation; fixed: boolean; index: number }) {
   const { criteria, level, bestPractice } = wcagLabels(v.tags);
+  const hasShot = v.nodes.some((n) => n.screenshot);
   return (
-    <li className={`issue impact-${v.impact}`}>
+    <li className={`issue impact-${v.impact}${fixed ? " is-fixed" : ""}`} style={{ transitionDelay: `${Math.min(index, 12) * 45}ms` }}>
       <details>
         <summary>
-          <span className={`badge badge-${v.impact}`}>{IMPACT_LABEL[v.impact]}</span>
+          <span className={`badge badge-${fixed ? "fixed" : v.impact}`}>{fixed ? "✓ Fixed" : IMPACT_LABEL[v.impact]}</span>
           <span className="issue-title">{v.help}</span>
           <span className="issue-count">
             {v.nodeCount} element{v.nodeCount === 1 ? "" : "s"}
@@ -67,12 +68,18 @@ function IssueItem({ v }: { v: Violation }) {
             </a>
           </div>
 
+          {!hasShot && (
+            <p className="muted small no-shot">
+              No screenshot: this problem isn&apos;t something you can see on the page (for example, it&apos;s in the page&apos;s
+              code or hidden from view).
+            </p>
+          )}
           <ol className="nodes">
             {v.nodes.map((n, i) => (
               <li key={i} className="node">
                 {n.screenshot && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img className="node-shot" src={n.screenshot} alt={`Highlighted element ${i + 1} for: ${v.help}`} loading="lazy" />
+                  <img className="node-shot" src={n.screenshot} alt={`Highlighted element ${i + 1} for: ${v.help}`} />
                 )}
                 <div className="node-info">
                   <code className="node-html">{n.html}</code>
