@@ -14,7 +14,7 @@ export function SiteHeader() {
           </span>
         </a>
         <nav className="site-nav" aria-label="Main">
-          <a href="#how">How it works</a>
+          <a href="/#how">How it works</a>
           <ThemeToggle />
         </nav>
       </div>
