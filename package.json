@@ -1,7 +1,7 @@
 {
   "name": "accessibility-checker",
   "version": "1.0.0",
-  "description": "Accessibility Checker by Viral Deshle: WCAG + performance scanner",
+  "description": "Accessibility Checker: WCAG + performance scanner",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -9,7 +9,7 @@
     "build:standalone": "node build-standalone.js"
   },
   "keywords": [],
-  "author": "Viral Deshle",
+  "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {

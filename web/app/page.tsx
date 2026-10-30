@@ -6,7 +6,6 @@ import { ScanForm } from "@/components/ScanForm";
 import { ScanProgress, type PageState } from "@/components/ScanProgress";
 import { Results } from "@/components/Results";
 import { ManualScan } from "@/components/ManualScan";
-import { Promo } from "@/components/Promo";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 
 type Phase = "idle" | "scanning" | "done" | "error";
@@ -217,10 +216,6 @@ export default function Home() {
             </li>
           </ol>
         </section>
-
-        <div className="wrap">
-          <Promo />
-        </div>
       </main>
       <SiteFooter />
     </>

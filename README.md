@@ -1,4 +1,4 @@
-# Accessibility Checker — by Viral Deshle
+# Accessibility Checker
 
 Automated WCAG accessibility and performance auditing for websites.
 
