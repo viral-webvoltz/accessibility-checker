@@ -6,10 +6,11 @@
 // also answers OPTIONS preflights without invoking this function.
 //
 // Routes:
-//   POST /api/scan   { urls: string[], crawl?: boolean, maxPages?: number }
+//   POST /api/scan   { urls: string[], crawl?: boolean, maxPages?: number, turnstileToken?: string }
 //   GET  /health
 const { streamScan } = require("./scanStream");
 const { closeBrowser } = require("./scanner");
+const { guardScanRequest, Rejection } = require("./guard");
 const logger = require("./logger");
 
 /* global awslambda */
@@ -42,6 +43,22 @@ exports.handler = awslambda.streamifyResponse(async (event, responseStream) => {
     body = JSON.parse(raw);
   } catch {
     return sendJson(400, { success: false, message: "Request body must be JSON" });
+  }
+
+  // Origin, bot check and rate limits — all before Chromium starts.
+  try {
+    const headers = event.headers || {};
+    await guardScanRequest({
+      origin: headers.origin || headers.Origin,
+      ip: event.requestContext?.http?.sourceIp,
+      turnstileToken: body.turnstileToken,
+    });
+  } catch (err) {
+    if (err instanceof Rejection) {
+      logger.warn("scan-rejected", { code: err.code, ip: event.requestContext?.http?.sourceIp });
+      return sendJson(err.status, { success: false, code: err.code, message: err.message });
+    }
+    throw err;
   }
 
   const stream = open(200, "application/x-ndjson; charset=utf-8");

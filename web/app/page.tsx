@@ -12,6 +12,10 @@ export default function Home() {
 
   const start = (req: ScanRequest) => {
     setGoing(true);
+    try {
+      if (req.turnstileToken) sessionStorage.setItem("turnstileToken", req.turnstileToken);
+      else sessionStorage.removeItem("turnstileToken");
+    } catch {}
     router.push(`/scan?${requestToQuery(req)}`);
   };
 

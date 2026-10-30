@@ -21,8 +21,23 @@ export function ScanView() {
   // Start (or restart) whenever the query changes. useScan aborts the
   // in-flight scan on unmount, so React's dev double-mount just restarts it.
   useEffect(() => {
-    if (req) start(req);
+    if (!req) return;
+    let turnstileToken: string | undefined;
+    try {
+      turnstileToken = sessionStorage.getItem("turnstileToken") || undefined;
+    } catch {}
+    start({ ...req, turnstileToken });
   }, [req, start]);
+
+  // Tokens are single-use: once a scan has finished, drop it so a reload
+  // sends the user back through the form instead of failing silently.
+  useEffect(() => {
+    if (scan.phase === "done" || scan.phase === "error") {
+      try {
+        sessionStorage.removeItem("turnstileToken");
+      } catch {}
+    }
+  }, [scan.phase]);
 
   useEffect(() => {
     if (scan.phase === "done" || scan.phase === "error") {
@@ -68,11 +83,8 @@ export function ScanView() {
           <h2>We couldn&apos;t finish that scan</h2>
           <p>{scan.error.message}</p>
           <div className="error-actions">
-            <button type="button" className="btn btn-primary" onClick={() => scan.start(req)}>
-              Try again
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={goHome}>
-              Scan a different site
+            <button type="button" className="btn btn-primary" onClick={goHome}>
+              Start a new scan
             </button>
           </div>
         </div>

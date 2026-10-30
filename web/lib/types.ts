@@ -90,4 +90,5 @@ export interface ScanRequest {
   urls: string[];
   crawl: boolean;
   maxPages: number;
+  turnstileToken?: string;
 }

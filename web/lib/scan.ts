@@ -17,7 +17,18 @@ export async function streamScan(req: ScanRequest, onEvent: (e: ScanEvent) => vo
     if ((err as Error).name === "AbortError") throw err;
     throw new Error("Couldn't reach the scanner. Check your connection and try again.");
   }
-  if (!res.ok || !res.body) throw new Error(`The scanner responded with HTTP ${res.status}.`);
+  if (!res.ok || !res.body) {
+    // Rejections (rate limit, bot check, busy) come back as JSON with a message.
+    let message = `The scanner responded with HTTP ${res.status}.`;
+    try {
+      const data = await res.json();
+      if (data?.message) message = data.message;
+    } catch {}
+    if (res.status === 429 && message.startsWith("The scanner responded")) {
+      message = "The scanner is at capacity right now. Please try again in a minute.";
+    }
+    throw new Error(message);
+  }
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";

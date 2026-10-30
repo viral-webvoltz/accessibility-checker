@@ -9,3 +9,5 @@ reports
 web/
 dist/
 .aws-sam/
+samconfig.toml
+template.yaml

@@ -11,7 +11,7 @@ const { isUrlSafe, runScan, failureDetails, LOW_PAGE_YIELD_THRESHOLD, MAX_CRAWL_
 const { flagIncident } = require("./alerts");
 const logger = require("./logger");
 
-const MAX_INPUT_URLS = 20;
+const MAX_INPUT_URLS = parseInt(process.env.MAX_INPUT_URLS) || 20;
 // Network rows kept per page in the downloadable report, to keep its size sane.
 const REPORT_NETWORK_ROWS = 150;
 

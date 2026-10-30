@@ -153,11 +153,11 @@ export function requestToQuery(req: ScanRequest) {
 }
 
 export function queryToRequest(params: URLSearchParams): ScanRequest | null {
-  const urls = params.getAll("url").filter(Boolean).slice(0, 10);
+  const urls = params.getAll("url").filter(Boolean).slice(0, 5);
   if (!urls.length) return null;
   return {
     urls,
     crawl: urls.length === 1 && params.get("crawl") === "1",
-    maxPages: Math.min(Math.max(parseInt(params.get("max") || "10") || 10, 1), 30),
+    maxPages: Math.min(Math.max(parseInt(params.get("max") || "5") || 5, 1), 10),
   };
 }

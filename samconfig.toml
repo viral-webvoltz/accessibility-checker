@@ -1,0 +1,17 @@
+# Defaults for `sam build` / `sam deploy`. Parameters you must supply on the
+# first deploy (AllowedOrigin, AlertEmail) are asked for by `sam deploy --guided`
+# and saved here afterwards.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "a11y-checker"
+
+[default.build.parameters]
+cached = true
+
+[default.deploy.parameters]
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM"
+resolve_image_repos = true
+confirm_changeset = true
+fail_on_empty_changeset = false

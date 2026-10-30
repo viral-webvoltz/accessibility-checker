@@ -1,14 +1,17 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
+import { Turnstile, TURNSTILE_SITE_KEY } from "./Turnstile";
 import type { ScanRequest } from "@/lib/types";
 
-const MAX_URLS = 10;
+const MAX_URLS = 5;
 
 export function ScanForm({ onSubmit, disabled }: { onSubmit: (req: ScanRequest) => void; disabled: boolean }) {
   const [urls, setUrls] = useState<string[]>([""]);
   const [crawl, setCrawl] = useState(false);
-  const [maxPages, setMaxPages] = useState(10);
+  const [maxPages, setMaxPages] = useState(5);
   const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const handleToken = useCallback((t: string | null) => setToken(t), []);
 
   const update = (i: number, value: string) => setUrls((prev) => prev.map((u, j) => (j === i ? value : u)));
 
@@ -27,8 +30,9 @@ export function ScanForm({ onSubmit, disabled }: { onSubmit: (req: ScanRequest) 
     });
     if (cleaned.length === 0) return setError("Enter a website address to scan.");
     if (bad) return setError(`"${bad}" doesn't look like a website address.`);
+    if (TURNSTILE_SITE_KEY && !token) return setError("Please complete the human check first.");
     setError(null);
-    onSubmit({ urls: cleaned, crawl: cleaned.length === 1 && crawl, maxPages });
+    onSubmit({ urls: cleaned, crawl: cleaned.length === 1 && crawl, maxPages, turnstileToken: token || undefined });
   };
 
   return (
@@ -85,7 +89,7 @@ export function ScanForm({ onSubmit, disabled }: { onSubmit: (req: ScanRequest) 
                     {" "}
                     (up to{" "}
                     <select aria-label="Maximum pages" value={maxPages} onChange={(e) => setMaxPages(Number(e.target.value))}>
-                      {[5, 10, 20, 30].map((n) => (
+                      {[3, 5, 10].map((n) => (
                         <option key={n} value={n}>
                           {n}
                         </option>
@@ -98,6 +102,8 @@ export function ScanForm({ onSubmit, disabled }: { onSubmit: (req: ScanRequest) 
             </label>
           )}
         </div>
+
+        <Turnstile onToken={handleToken} />
 
         <button type="submit" className="btn btn-primary btn-lg">
           {disabled ? "Scanning…" : "Run free scan"}

@@ -1,29 +1,114 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Accessibility Checker scanner — streaming Lambda with headless Chromium.
+Description: >
+  Accessibility Checker scanner — streaming Lambda (headless Chromium) behind a
+  Function URL, with per-IP rate limits, a global daily cap, an optional bot
+  check, a concurrency cap and a monthly budget alert to keep costs bounded.
 
 Parameters:
   AllowedOrigin:
     Type: String
-    Description: Your Vercel frontend URL, e.g. https://a11y-checker.vercel.app (no trailing slash)
-    Default: "*"
+    Description: Your frontend URL exactly as the browser sends it, e.g. https://a11y-checker.vercel.app (no trailing slash)
+    AllowedPattern: "^https?://[^/]+$"
+    ConstraintDescription: Must be an origin like https://example.vercel.app with no path or trailing slash.
+
+  AlertEmail:
+    Type: String
+    Description: Email that receives the AWS budget alerts
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: Email an alert when your whole AWS account's monthly spend is forecast or actual above this (USD)
+
+  ReservedConcurrency:
+    Type: String
+    Default: "2"
+    Description: >
+      Max scans running at the same time (extra requests get HTTP 429 at no cost).
+      New AWS accounts with a total concurrency limit of 10 can't reserve any — set "none" if deploy fails with
+      "decreases account's UnreservedConcurrentExecution below its minimum value".
+
+  ScansPerIpPerHour:
+    Type: Number
+    Default: 5
+  ScansPerIpPerDay:
+    Type: Number
+    Default: 20
+  ScansPerDayGlobal:
+    Type: Number
+    Default: 100
+    Description: Hard daily ceiling for all users combined — the main cost guard.
+
+  TurnstileSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Optional Cloudflare Turnstile secret key. Empty = bot check off.
+
+Conditions:
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, "none"]]
 
 Resources:
+  # Counters for rate limiting. Items expire on their own (TTL), so the table
+  # stays tiny; on-demand billing costs fractions of a cent at this volume.
+  RateLimitTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  ScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-scanner
+      RetentionInDays: 7
+
   ScannerFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub ${AWS::StackName}-scanner
       PackageType: Image
       Architectures: [arm64]
-      MemorySize: 3008
-      Timeout: 900
+      # 2 GB is enough for Chromium with 2 tabs; arm64 is ~20% cheaper than x86.
+      MemorySize: 2048
+      # Hard stop per scan (10 pages fit comfortably in this).
+      Timeout: 180
       EphemeralStorage:
         Size: 1024
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref AWS::NoValue]
+      LoggingConfig:
+        LogGroup: !Ref ScannerLogGroup
       Environment:
         Variables:
           NODE_ENV: production
-          AUDIT_CONCURRENCY: "3"
-          MAX_CRAWL_PAGES: "20"
-          ABSOLUTE_MAX_PAGES: "30"
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          RATE_TABLE: !Ref RateLimitTable
+          SCANS_PER_IP_PER_HOUR: !Ref ScansPerIpPerHour
+          SCANS_PER_IP_PER_DAY: !Ref ScansPerIpPerDay
+          SCANS_PER_DAY_GLOBAL: !Ref ScansPerDayGlobal
+          TURNSTILE_SECRET: !Ref TurnstileSecret
+          # Keep each scan small and bounded.
+          AUDIT_CONCURRENCY: "2"
+          MAX_CRAWL_PAGES: "10"
+          ABSOLUTE_MAX_PAGES: "10"
+          MAX_INPUT_URLS: "5"
+          POST_SCROLL_SETTLE_MS: "4000"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt RateLimitTable.Arn
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: RESPONSE_STREAM
@@ -37,7 +122,51 @@ Resources:
       DockerContext: .
       DockerTag: latest
 
+  # Public Function URLs need lambda:InvokeFunction as well as the
+  # lambda:InvokeFunctionUrl permission SAM adds; this one is limited to
+  # calls that come through the URL.
+  ScannerUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt ScannerFunction.Arn
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  # Emails you at 80% of the budget (forecast) and 100% (actual).
+  # Budgets only alert — they don't stop spending; the daily cap and
+  # concurrency limit above are what actually bound the cost.
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub ${AWS::StackName}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
 Outputs:
   ScannerUrl:
-    Description: Set this as NEXT_PUBLIC_SCANNER_URL in Vercel
+    Description: Set this as NEXT_PUBLIC_SCANNER_URL in Vercel (remove the trailing slash)
     Value: !GetAtt ScannerFunctionUrl.FunctionUrl
+  RateLimitTableName:
+    Value: !Ref RateLimitTable

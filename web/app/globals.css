@@ -1006,3 +1006,5 @@ kbd {
 .scan-main { min-height: calc(100vh - 220px); padding-top: 0.5rem; }
 .scan-main .results { margin-top: 1.5rem; }
 .error-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+
+.turnstile { margin: 0 0 0.9rem; min-height: 65px; }
