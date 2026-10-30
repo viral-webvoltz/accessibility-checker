@@ -3,4 +3,6 @@ reports/
 logs/
 .env
 .env.*
-!.env.exampledist/
+!.env.example
+dist/
+.aws-sam/

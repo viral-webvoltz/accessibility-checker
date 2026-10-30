@@ -1,0 +1,24 @@
+# Container image for AWS Lambda (Node.js 22 managed runtime base image).
+# Chromium comes from @sparticuz/chromium, which is built for Lambda's
+# Amazon Linux environment. Works on x86_64 and arm64 (Graviton, ~20% cheaper).
+#
+#   docker build --platform linux/arm64 -f Dockerfile.lambda -t a11y-scanner .
+FROM public.ecr.aws/lambda/nodejs:22
+
+# Puppeteer's own Chrome download isn't usable on Lambda — skip it.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV NODE_ENV=production
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev \
+  # Keep this major in step with the Chrome version Puppeteer expects
+  # (puppeteer 25.2 -> Chrome 150).
+  && npm install --no-save @sparticuz/chromium@152.0.0 \
+  && npm cache clean --force
+
+COPY *.js ./
+COPY views ./views
+
+CMD ["lambda.handler"]

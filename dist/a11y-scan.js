@@ -24,9 +24,10 @@
  * reportTemplate.js — multi-page accessibility report generator
  */
 
-// Webvoltz favicon, inlined so downloaded standalone reports still show it
-// (sourced from webvoltz.com's own favicon).
-const FAVICON_DATA_URI = "data:image/webp;base64,UklGRgYCAABXRUJQVlA4WAoAAAAQAAAAHwAAHwAAQUxQSIYAAAABcFNtW+t8C4gAA+kCblFYN6ykm/hNcDBwmf6f9OQfs0XEBACAqTuay5eZxtbiteuilB9KGvyLxZ7Lj/m4BuD2RfHiYHvW4MFUsajGuhMdCVSUKWvl8vedtTJp0SQ6Etqkk1rTswaPFv6ocfUA1hf+FV93eHZjlF9IGjxe2ypQ/mam0BoAAFZQOCBaAQAAMAkAnQEqIAAgAD5VIIxFI6IhG/QAOAVEtgBdl+EKBOAKgA6IDrAPQg6Uf9of1yxADrArMeYdxlWmgOXRlMLl1Y38z2sCIG9ZJzf9KolhubyyAAD+//DCtuHk/+OYX5ovoff7vjgn3D4Sv7xo4pTH1V9v6N0bW08L+lh/Iz5d/x7oP42VNQ8lhkP+oTjKnsf+L2/7iy8yKiABdp818CcRAOdOiAuqr811O36pHYxwqpSv7flyctiojVHN7zDAKTnoL62fCrFRK9K9z5DLfq/R4D8ZNPhv9WLOfaL+nrZO6lQuJfBH/UdAOuAa7+KKEeZ2vELz3zTj/+ISTgyXhqnBSe3FU9vnUW+xbNodyyNa3b24pK+mY/pX7PBtMlP/DVKCXUA/2jZW4yl60NOwwP0hNBpWN61Qqv77yngLhmWM9VHxvY31bWMPmjIfDbA7H/OudS+/Bre1AthAAA==";
+// Viral Deshle "VD" mark, inlined so downloaded standalone reports still show it.
+const BRAND_NAME = "Viral Deshle";
+const BRAND_MARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#D77757"/><path d="M6.5 9.5 11 22.5 15.5 9.5" fill="none" stroke="#0B0D10" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.5 9.5v13h2a6.5 6.5 0 0 0 0-13z" fill="none" stroke="#0B0D10" stroke-width="2.6" stroke-linejoin="round"/></svg>`;
+const FAVICON_DATA_URI = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%23D77757%22/%3E%3Cpath%20d%3D%22M6.5%209.5%2011%2022.5%2015.5%209.5%22%20fill%3D%22none%22%20stroke%3D%22%230B0D10%22%20stroke-width%3D%222.6%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3Cpath%20d%3D%22M18.5%209.5v13h2a6.5%206.5%200%200%200%200-13z%22%20fill%3D%22none%22%20stroke%3D%22%230B0D10%22%20stroke-width%3D%222.6%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E";
 
 // ─── WCAG criterion metadata ──────────────────────────────────────────────────
 const WCAG_CRITERIA_MAP = {
@@ -956,7 +957,7 @@ function buildHtmlReport(report, customRuleIds) {
 :root{
   --bg:#F5F5F5;--surface:#FFFFFF;--border:#E2E4E8;--text:#0D0D0D;--muted:#6B7280;
   --green:#16A34A;--red:#DC2626;--orange:#EA580C;--amber:#CA8A04;--blue:#2563EB;
-  --brand:#F5B000;--brand-dark:#111111;--brand-hover:#E0A000;
+  --brand:#D77757;--brand-dark:#0B0D10;--brand-hover:#B44B24;
   --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
 }
@@ -966,7 +967,12 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:
 /* ── Site header ── */
 .site-hdr{background:var(--brand-dark);border-bottom:3px solid var(--brand)}
 .site-hdr-inner{max-width:1440px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;padding:.85rem 1.5rem}
-.logo-box{display:flex;align-items:center}
+.logo-box{display:flex;align-items:center;gap:.6rem}
+.brand-footer{max-width:1440px;margin:0 auto;padding:1rem 1.5rem 2.5rem;font-size:.78rem;color:var(--muted)}
+.brand-mark svg{width:34px;height:34px;display:block}
+.brand-text{display:flex;flex-direction:column;line-height:1.15}
+.brand-name{color:#fff;font-weight:800;font-size:1rem;letter-spacing:-.01em}
+.brand-sub{color:#D77757;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
 .logo-box img,.logo-box svg,.site-hdr-inner>div:first-child>svg,.site-hdr-inner>div:first-child>img{max-height:36px;height:auto;width:auto;display:block}
 .site-info-right{text-align:right}
 .site-domain{font-size:1.05rem;font-weight:700;color:#FFFFFF}
@@ -1112,7 +1118,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:
 .issue-desc{font-size:.78rem;color:var(--muted);margin-top:.2rem;line-height:1.4}
 .issue-rule{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;margin-top:.35rem}
 .issue-rule code{font-family:var(--mono);font-size:.72rem;background:#F3F4F6;padding:.1rem .3rem;border-radius:4px;color:var(--muted)}
-.tag-custom-pill{font-size:.66rem;background:#EEF2FF;color:#4338CA;border:1px solid #C7D2FE;border-radius:999px;padding:.1rem .4rem;text-transform:uppercase;letter-spacing:.03em}
+.tag-custom-pill{font-size:.66rem;background:#EEF2FF;color:#9A3F1D;border:1px solid #C7D2FE;border-radius:999px;padding:.1rem .4rem;text-transform:uppercase;letter-spacing:.03em}
 .impact-pill{font-size:.68rem;border-radius:999px;padding:.1rem .45rem;font-weight:600}
 .elem-badge{display:inline-block;font-size:.78rem;font-weight:600;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:6px;padding:.2rem .6rem}
 .elem-badge-pass{display:inline-block;font-size:.78rem;font-weight:600;background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0;border-radius:6px;padding:.2rem .6rem}
@@ -1122,7 +1128,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:
 .wcag-tag{display:inline-flex;align-items:center;gap:.3rem;flex-wrap:wrap;font-size:.75rem;color:var(--text)}
 .wcag-lvl{font-size:.65rem;font-weight:700;border-radius:4px;padding:.1rem .3rem}
 .wcag-lvl-a{background:#DBEAFE;color:#1D4ED8}
-.wcag-lvl-aa{background:#E0E7FF;color:#4338CA}
+.wcag-lvl-aa{background:#E0E7FF;color:#9A3F1D}
 .wcag-lvl-aaa{background:#EDE9FE;color:#6D28D9}
 .wcag-ver{font-size:.65rem;color:var(--muted);background:#F3F4F6;border-radius:3px;padding:.05rem .25rem}
 .wcag-more{font-size:.7rem;color:var(--blue);cursor:pointer;margin-left:.2rem}
@@ -1199,11 +1205,7 @@ td.num{text-align:right;font-family:var(--mono)}
 <!-- SITE HEADER -->
 <div class="site-hdr">
   <div class="site-hdr-inner">
-    <div><?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="165" height="26" viewBox="0 0 165 26" fill="none">
-  <path d="M30.72 7.34256L24.32 25H19.3969L15.4256 14.0379L11.3231 25H6.4L0.0328205 7.34256H4.85744L9.02564 19.2892L13.3579 7.34256H17.6903L21.8913 19.2892L26.1908 7.34256H30.72ZM49.9159 16.2369C49.9159 16.3026 49.8831 16.7621 49.8174 17.6154H36.4595C36.7002 18.7094 37.2691 19.5737 38.1662 20.2082C39.0632 20.8427 40.1791 21.16 41.5138 21.16C42.4328 21.16 43.2424 21.0287 43.9426 20.7662C44.6646 20.4817 45.332 20.0441 45.9446 19.4533L48.6687 22.4072C47.0058 24.3108 44.5771 25.2626 41.3826 25.2626C39.3915 25.2626 37.6301 24.8797 36.0985 24.1138C34.5668 23.3262 33.3853 22.2431 32.5538 20.8646C31.7224 19.4862 31.3067 17.9217 31.3067 16.1713C31.3067 14.4427 31.7115 12.8892 32.521 11.5108C33.3525 10.1104 34.4793 9.02735 35.9015 8.26154C37.3456 7.47385 38.9538 7.08 40.7262 7.08C42.4547 7.08 44.0191 7.45197 45.4195 8.1959C46.8198 8.93983 47.9138 10.012 48.7015 11.4123C49.5111 12.7908 49.9159 14.399 49.9159 16.2369ZM40.759 10.9528C39.5993 10.9528 38.6256 11.281 37.8379 11.9374C37.0503 12.5938 36.5689 13.4909 36.3938 14.6287H45.0913C44.9162 13.5128 44.4349 12.6267 43.6472 11.9703C42.8595 11.292 41.8968 10.9528 40.759 10.9528ZM63.7615 7.08C65.4026 7.08 66.8904 7.46291 68.2251 8.22872C69.5817 8.97265 70.6429 10.0338 71.4087 11.4123C72.1745 12.7689 72.5574 14.3552 72.5574 16.1713C72.5574 17.9874 72.1745 19.5846 71.4087 20.9631C70.6429 22.3197 69.5817 23.3809 68.2251 24.1467C66.8904 24.8906 65.4026 25.2626 63.7615 25.2626C61.3328 25.2626 59.4839 24.4968 58.2149 22.9651V25H53.3246V0.64718H58.4446V9.21333C59.7356 7.79111 61.5079 7.08 63.7615 7.08ZM62.8754 21.0615C64.1882 21.0615 65.2603 20.6239 66.0918 19.7487C66.9451 18.8516 67.3718 17.6591 67.3718 16.1713C67.3718 14.6834 66.9451 13.5019 66.0918 12.6267C65.2603 11.7296 64.1882 11.281 62.8754 11.281C61.5626 11.281 60.4795 11.7296 59.6262 12.6267C58.7947 13.5019 58.379 14.6834 58.379 16.1713C58.379 17.6591 58.7947 18.8516 59.6262 19.7487C60.4795 20.6239 61.5626 21.0615 62.8754 21.0615ZM93.0303 7.34256L85.58 25H80.2959L72.8785 7.34256H78.1626L83.0528 19.3549L88.1072 7.34256H93.0303ZM103.041 25.2626C101.181 25.2626 99.5071 24.8797 98.0192 24.1138C96.5532 23.3262 95.4045 22.2431 94.5731 20.8646C93.7416 19.4862 93.3259 17.9217 93.3259 16.1713C93.3259 14.4209 93.7416 12.8564 94.5731 11.4779C95.4045 10.0995 96.5532 9.02735 98.0192 8.26154C99.5071 7.47385 101.181 7.08 103.041 7.08C104.901 7.08 106.563 7.47385 108.029 8.26154C109.495 9.02735 110.644 10.0995 111.476 11.4779C112.307 12.8564 112.723 14.4209 112.723 16.1713C112.723 17.9217 112.307 19.4862 111.476 20.8646C110.644 22.2431 109.495 23.3262 108.029 24.1138C106.563 24.8797 104.901 25.2626 103.041 25.2626ZM103.041 21.0615C104.354 21.0615 105.426 20.6239 106.257 19.7487C107.111 18.8516 107.537 17.6591 107.537 16.1713C107.537 14.6834 107.111 13.5019 106.257 12.6267C105.426 11.7296 104.354 11.281 103.041 11.281C101.728 11.281 100.645 11.7296 99.7915 12.6267C98.9382 13.5019 98.5115 14.6834 98.5115 16.1713C98.5115 17.6591 98.9382 18.8516 99.7915 19.7487C100.645 20.6239 101.728 21.0615 103.041 21.0615ZM116.145 0.64718H121.265V25H116.145V0.64718ZM138.688 24.1467C138.184 24.5186 137.561 24.8031 136.817 25C136.095 25.175 135.329 25.2626 134.519 25.2626C132.419 25.2626 130.789 24.7265 129.629 23.6544C128.491 22.5822 127.923 21.0068 127.923 18.9282V11.6749H125.198V7.73641H127.923V3.43692H133.043V7.73641H137.441V11.6749H133.043V18.8626C133.043 19.6065 133.229 20.1863 133.601 20.6021C133.994 20.9959 134.541 21.1928 135.242 21.1928C136.051 21.1928 136.74 20.974 137.309 20.5364L138.688 24.1467ZM156.101 21.0615V25H140.347V21.9149L149.34 11.281H140.577V7.34256H155.806V10.4277L146.813 21.0615H156.101Z" fill="#FFFFFF"></path>
-  <path d="M161.511 25.2626C160.614 25.2626 159.859 24.9562 159.246 24.3436C158.634 23.7309 158.327 22.9651 158.327 22.0462C158.327 21.1053 158.634 20.3504 159.246 19.7815C159.859 19.1908 160.614 18.8954 161.511 18.8954C162.408 18.8954 163.163 19.1908 163.776 19.7815C164.388 20.3504 164.695 21.1053 164.695 22.0462C164.695 22.9651 164.388 23.7309 163.776 24.3436C163.163 24.9562 162.408 25.2626 161.511 25.2626Z" fill="#FFC107"></path>
-</svg></div>
+    <div class="logo-box"><span class="brand-mark">${BRAND_MARK_SVG}</span><span class="brand-text"><span class="brand-name">${BRAND_NAME}</span><span class="brand-sub">Accessibility Checker</span></span></div>
     <div class="site-info-right">
       <div class="site-domain">${escapeHtml(domain)}</div>
       <div class="site-meta">Scanned ${escapeHtml(auditDate)} &bull; ${pages.length} page${pages.length !== 1 ? "s" : ""} crawled</div>
@@ -1298,11 +1300,12 @@ function toggleRow(id) {
   row.classList.toggle("open", !isOpen);
 }
 </script>
+<footer class="brand-footer">Report generated by <strong>${BRAND_NAME}</strong> &middot; Accessibility Checker. Automated testing finds many, not all, accessibility issues &mdash; pair it with manual review.</footer>
 </body>
 </html>`;
 }
 
-module.exports = { buildHtmlReport };
+module.exports = { buildHtmlReport, calculateScore };
 
     return module.exports.buildHtmlReport;
   })();

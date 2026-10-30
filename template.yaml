@@ -1,0 +1,43 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Accessibility Checker scanner (by Viral Deshle) — streaming Lambda with headless Chromium.
+
+Parameters:
+  AllowedOrigin:
+    Type: String
+    Description: Your Vercel frontend URL, e.g. https://a11y-checker.vercel.app (no trailing slash)
+    Default: "*"
+
+Resources:
+  ScannerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures: [arm64]
+      MemorySize: 3008
+      Timeout: 900
+      EphemeralStorage:
+        Size: 1024
+      Environment:
+        Variables:
+          NODE_ENV: production
+          AUDIT_CONCURRENCY: "3"
+          MAX_CRAWL_PAGES: "20"
+          ABSOLUTE_MAX_PAGES: "30"
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins: [!Ref AllowedOrigin]
+          AllowMethods: [POST, GET]
+          AllowHeaders: [content-type]
+          MaxAge: 3600
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: .
+      DockerTag: latest
+
+Outputs:
+  ScannerUrl:
+    Description: Set this as NEXT_PUBLIC_SCANNER_URL in Vercel
+    Value: !GetAtt ScannerFunctionUrl.FunctionUrl

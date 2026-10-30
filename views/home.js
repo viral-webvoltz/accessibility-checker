@@ -10,7 +10,7 @@ function renderHomePage() {
   :root{
     --bg:#F5F5F5;--surface:#FFFFFF;--border:#E2E4E8;--text:#0D0D0D;--muted:#6B7280;
     --green:#16A34A;--red:#DC2626;--amber:#CA8A04;
-    --brand:#F5B000;--brand-dark:#111111;--brand-hover:#E0A000;
+    --brand:#D77757;--brand-dark:#0B0D10;--brand-hover:#B44B24;
     --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
     --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace;
   }
@@ -63,14 +63,14 @@ function renderHomePage() {
 
   .submit-btn{
     width:100%;margin-top:1.25rem;padding:.85rem 1rem;border:none;border-radius:8px;
-    background:var(--brand);color:var(--brand-dark);font-size:.95rem;font-weight:800;
+    background:var(--brand-hover);color:#fff;font-size:.95rem;font-weight:800;
     cursor:pointer;display:flex;align-items:center;justify-content:center;gap:.6rem;
     transition:background .12s;
   }
-  .submit-btn:hover:not(:disabled){background:var(--brand-hover)}
+  .submit-btn:hover:not(:disabled){background:#9A3F1D}
   .submit-btn:disabled{opacity:.75;cursor:not-allowed}
 
-  .spinner{width:1rem;height:1rem;border-radius:50%;border:2px solid rgba(17,17,17,.25);border-top-color:var(--brand-dark);animation:spin .7s linear infinite;flex-shrink:0}
+  .spinner{width:1rem;height:1rem;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;flex-shrink:0}
   @keyframes spin{to{transform:rotate(360deg)}}
 
   .scan-panel{display:flex;align-items:center;gap:1.1rem}
@@ -122,7 +122,7 @@ function renderHomePage() {
 <header class="hdr">
   <div class="hdr-inner">
     <h1 class="hdr-title">Accessibility Checker</h1>
-    <p class="hdr-tag">Scan a page for WCAG issues in seconds.</p>
+    <p class="hdr-tag">Scan a page for WCAG issues in seconds. Built by Viral Deshle.</p>
   </div>
 </header>
 
@@ -149,12 +149,12 @@ function renderHomePage() {
     <div class="scan-icon" aria-hidden="true">
       <svg width="56" height="42" viewBox="0 0 64 48" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="1" y="1" width="62" height="46" rx="6" fill="#F5F5F5" stroke="#E2E4E8" stroke-width="2"/>
-        <rect x="1" y="1" width="62" height="12" rx="6" fill="#111111"/>
-        <path d="M1 7 L7 1 H57 A6 6 0 0 1 63 7 V13 H1 Z" fill="#111111"/>
+        <rect x="1" y="1" width="62" height="12" rx="6" fill="#0B0D10"/>
+        <path d="M1 7 L7 1 H57 A6 6 0 0 1 63 7 V13 H1 Z" fill="#0B0D10"/>
         <circle cx="9" cy="7" r="2" fill="#DC2626"/>
         <circle cx="16" cy="7" r="2" fill="#CA8A04"/>
         <circle cx="23" cy="7" r="2" fill="#16A34A"/>
-        <rect class="scan-sweep" x="1" y="15" width="62" height="3" fill="#F5B000"/>
+        <rect class="scan-sweep" x="1" y="15" width="62" height="3" fill="#D77757"/>
       </svg>
     </div>
     <p class="scan-status" id="scanStatusText">Opening the page&hellip;<span class="sub" id="scanStatusSub">This can take a little longer for sites with several pages.</span></p>

@@ -6,3 +6,6 @@ reports
 .env.*
 .chrome-profile-interactive
 *.log
+web/
+dist/
+.aws-sam/

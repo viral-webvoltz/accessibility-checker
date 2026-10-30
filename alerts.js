@@ -20,7 +20,8 @@ const path = require("path");
 const https = require("https");
 const logger = require("./logger");
 
-const LOG_DIR = path.join(__dirname, "logs");
+// Lambda's code directory is read-only; /tmp is the only writable path there.
+const LOG_DIR = process.env.AWS_LAMBDA_FUNCTION_NAME ? "/tmp/logs" : path.join(__dirname, "logs");
 const FLAGGED_LOG_PATH = path.join(LOG_DIR, "flagged-sites.jsonl");
 
 function appendFlagRecord(record) {

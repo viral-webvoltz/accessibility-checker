@@ -1,4 +1,17 @@
-# Accessibility Checker
+# Accessibility Checker — by Viral Deshle
+
+Automated WCAG accessibility and performance auditing for websites.
+
+- **`web/`** — the Next.js frontend (deploys to Vercel): live scan progress, screenshots of every problem element, and an Accessibility ↔ Performance view with animated scores.
+- **Repo root** — the scanner (Node + Puppeteer + axe-core). Runs as an Express server locally, or on AWS Lambda via `lambda.js`, streaming progress to the frontend.
+
+See **[DEPLOY.md](DEPLOY.md)** for Lambda + Vercel setup.
+
+### Streaming API
+
+`POST /api/scan` with `{ "urls": ["https://example.com"], "crawl": false, "maxPages": 10 }` returns newline-delimited JSON events: `status`, `plan`, `page-start`, `page-progress`, `challenge`, `page-preview` (screenshot), `page-complete` (results + performance), `page-failed`, `report` (full HTML report), and finally `done` or `error`. See `scanStream.js`.
+
+---
 
 Automated WCAG accessibility auditing for websites — crawl a site (or scan a list of URLs), run [axe-core](https://github.com/dequelabs/axe-core) plus a curated set of custom rules, and get back a clean, shareable HTML report.
 
@@ -31,7 +44,7 @@ npm run dev            # nodemon, auto-restarts on change
 npm start               # node index.js
 ```
 
-Open `http://localhost:3000`, enter a URL, and run a scan.
+Open `http://localhost:4000`, enter a URL, and run a scan.
 
 ### Chrome setup
 
