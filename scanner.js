@@ -3,8 +3,6 @@
 // progress events streamed to the frontend.
 const fs = require("fs");
 const { URL } = require("url");
-const dns = require("dns").promises;
-const net = require("net");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 puppeteer.use(StealthPlugin());
@@ -15,6 +13,7 @@ const { customChecks, customRules, CUSTOM_RULE_IDS } = require("./customAxeRules
 const { KNOWN_NOISE_SELECTORS, isFontProbeSpan, isWordMeasureDiv } = require("./noiseFilters");
 const { PERF_OBSERVER_SCRIPT, readPerformanceMetrics, scorePerformance } = require("./performance");
 const logger = require("./logger");
+const { isUrlSafe, guardPageRequests } = require("./netGuard");
 
 const IS_LAMBDA = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
 
@@ -170,38 +169,6 @@ async function closeBrowser() {
 }
 
 // ---------- SSRF protection ----------
-async function isUrlSafe(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  if (!["http:", "https:"].includes(parsed.protocol)) return false;
-
-  try {
-    const addresses = await dns.lookup(parsed.hostname, { all: true });
-    for (const { address } of addresses) {
-      if (!net.isIP(address)) continue;
-      if (
-        address.startsWith("127.") ||
-        address.startsWith("10.") ||
-        address.startsWith("192.168.") ||
-        address.startsWith("169.254.") ||
-        address.startsWith("0.") ||
-        /^172\.(1[6-9]|2\d|3[0-1])\./.test(address) ||
-        address === "::1" ||
-        /^f[cd]/i.test(address) ||
-        /^fe80:/i.test(address)
-      ) {
-        return false;
-      }
-    }
-  } catch {
-    return false;
-  }
-  return true;
-}
 
 // ---------- URL helpers ----------
 // Two-letter locale segment a path starts with (e.g. "/en/about" -> "en"), or null.
@@ -523,6 +490,8 @@ async function auditPage(url, { collectLinks = false, emit = () => {} } = {}) {
   try {
     const activeBrowser = await getBrowser();
     page = await activeBrowser.newPage();
+    // Block redirects, links and sub-resources that point at private addresses.
+    await guardPageRequests(page);
     await page.setUserAgent(REALISTIC_USER_AGENT);
     await page.setViewport(VIEWPORT);
     // Audit the default (light) look regardless of the host machine's theme.

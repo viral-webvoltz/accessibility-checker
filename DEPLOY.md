@@ -87,7 +87,11 @@ Everything below runs **before Chromium starts**, so a rejected request costs a 
 | Turnstile (optional) | A one-time human check on the form, verified server-side. Stops scripts that call the URL directly. This is the only layer that does. |
 | Per-IP limits | 5 scans/hour and 20/day per IP (DynamoDB counters that expire on their own). |
 | Global daily cap | 100 scans/day for everyone combined. **This is the hard cost ceiling.** |
-| Reserved concurrency | At most 2 scans at the same time; extra requests get HTTP 429 for free. |
+| Per-IP limits use /64 for IPv6 | One IPv6 connection owns billions of addresses, so it's counted as one. |
+| Kill switch | More than `InvocationsPerMinuteLimit` (60) requests in a minute → the scanner pauses itself (all requests get a free HTTP 429), you get an email, and it turns back on at 00:05 UTC. Bounds the cost of request floods, which every other layer still pays a few ms for. |
+| Reserved concurrency | Optional (needs an account limit above 10): at most N scans at the same time. |
+| Private-network block | The browser refuses any request, redirect, iframe or crawled link to private/loopback/metadata addresses (e.g. Lambda's runtime API on 127.0.0.1). |
+| Frontend headers | CSP (scripts only from the site and Turnstile, fetches only to the scanner), no framing, HSTS, nosniff. |
 | Small jobs | ≤10 pages, ≤5 URLs, 2 tabs, 2 GB memory, 3-minute timeout. |
 | Budget alert | Email at 80% (forecast) and 100% (actual) of your monthly budget. Alerts only; it doesn't stop anything. |
 | Log retention | CloudWatch logs kept 7 days. |
@@ -108,6 +112,7 @@ Lambda x86_64 costs about $0.0000167 per GB-second. The always-free tier covers 
 ## Troubleshooting
 
 - **`decreases account's UnreservedConcurrentExecution below its minimum value of [10]`**: new accounts often have a total limit of 10 and can't reserve any. Redeploy with `ReservedConcurrency=none` (`sam deploy --parameter-overrides ReservedConcurrency=none`). The daily cap still bounds cost. You can ask AWS Support (Service Quotas → Lambda → Concurrent executions) to raise the account limit to 1000 for free, then set it back to 2.
+- **Every scan fails with "busy" / HTTP 429 for everyone**: the kill switch tripped (check for the email). It resets itself at 00:05 UTC; to re-enable now run `aws lambda delete-function-concurrency --function-name a11y-checker-scanner --region ap-south-1`.
 - **Scans fail with "only accepts requests from its own website"**: `AllowedOrigin` doesn't exactly match the browser's origin. Vercel *preview* URLs are different domains; only the production domain is allowed. Add a custom domain and use that as `AllowedOrigin` if you prefer.
 - **CORS error in the browser console**: same cause as above. CORS is configured on the Function URL from `AllowedOrigin`.
 - **"The human check expired"**: Turnstile tokens are single-use and last 5 minutes. Start a new scan from the form.

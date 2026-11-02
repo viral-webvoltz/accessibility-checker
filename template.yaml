@@ -42,6 +42,15 @@ Parameters:
     Default: 100
     Description: Hard daily ceiling for all users combined — the main cost guard.
 
+  InvocationsPerMinuteLimit:
+    Type: Number
+    Default: 60
+    MinValue: 5
+    Description: >
+      Kill switch. If the scanner is invoked more than this many times in one
+      minute (real use is a few per hour), it is paused until 00:05 UTC and you
+      get an email. Stops request floods from running up the bill.
+
   TurnstileSecret:
     Type: String
     Default: ""
@@ -133,6 +142,95 @@ Resources:
       FunctionName: !GetAtt ScannerFunction.Arn
       Principal: "*"
       InvokedViaFunctionUrl: true
+
+  # ---------- Kill switch: pause the scanner during a request flood ----------
+  # Every request, even a rejected one, is a billed invocation. Function URLs
+  # have no built-in throttling, so an alarm on the invocation rate sets the
+  # scanner's concurrency to 0 (all requests then get a free HTTP 429) and a
+  # daily schedule turns it back on.
+  KillSwitchTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  InvocationFloodAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scanner invoked far more often than real use — pausing it.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ScannerFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: !Ref InvocationsPerMinuteLimit
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref KillSwitchTopic]
+
+  KillSwitchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-kill-switch
+      RetentionInDays: 7
+
+  KillSwitchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-kill-switch
+      Runtime: python3.13
+      Handler: index.handler
+      Architectures: [arm64]
+      MemorySize: 128
+      Timeout: 15
+      LoggingConfig:
+        LogGroup: !Ref KillSwitchLogGroup
+      Environment:
+        Variables:
+          SCANNER: !Ref ScannerFunction
+          RESTORE: !Ref ReservedConcurrency
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:PutFunctionConcurrency
+                - lambda:DeleteFunctionConcurrency
+              Resource: !GetAtt ScannerFunction.Arn
+      Events:
+        Flood:
+          Type: SNS
+          Properties:
+            Topic: !Ref KillSwitchTopic
+        DailyReset:
+          Type: Schedule
+          Properties:
+            Schedule: cron(5 0 * * ? *)
+            Input: '{"action": "reset"}'
+      InlineCode: |
+        import json, os
+        import boto3
+
+        lam = boto3.client("lambda")
+        SCANNER = os.environ["SCANNER"]
+        RESTORE = os.environ["RESTORE"]
+
+        def handler(event, context):
+            if event.get("action") == "reset":
+                if RESTORE == "none":
+                    lam.delete_function_concurrency(FunctionName=SCANNER)
+                else:
+                    lam.put_function_concurrency(FunctionName=SCANNER, ReservedConcurrentExecutions=int(RESTORE))
+                print("scanner enabled")
+                return
+            for record in event.get("Records", []):
+                alarm = json.loads(record["Sns"]["Message"])
+                if alarm.get("NewStateValue") == "ALARM":
+                    lam.put_function_concurrency(FunctionName=SCANNER, ReservedConcurrentExecutions=0)
+                    print("scanner paused: request flood")
 
   # Emails you at 80% of the budget (forecast) and 100% (actual).
   # Budgets only alert — they don't stop spending; the daily cap and

@@ -19,7 +19,7 @@ function parseScanRequest(body) {
   const rawUrls = Array.isArray(body?.urls) ? body.urls : body?.url ? [body.url] : [];
   const urls = rawUrls
     .map((u) => String(u || "").trim())
-    .filter(Boolean)
+    .filter((u) => u && u.length <= 2048)
     .map((u) => (/^https?:\/\//i.test(u) ? u : `https://${u}`))
     .slice(0, MAX_INPUT_URLS);
   return {

@@ -11,6 +11,7 @@
 //   SCANS_PER_IP_PER_DAY    default 20
 //   SCANS_PER_DAY_GLOBAL    default 100
 //   TURNSTILE_SECRET        Cloudflare Turnstile secret (unset → bot check off)
+const net = require("net");
 const { DynamoDBClient, UpdateItemCommand } = require("@aws-sdk/client-dynamodb");
 const logger = require("./logger");
 
@@ -84,12 +85,25 @@ async function consume(key, limit, ttlSeconds) {
   }
 }
 
+// Rate-limit key for a client. One IPv6 user usually controls a whole /64
+// (2^64 addresses), so IPv6 is limited per /64 rather than per address.
+function clientKey(ip) {
+  if (net.isIP(ip) !== 6) return ip || "unknown";
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  const [head, tail = ""] = ip.toLowerCase().split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = ip.includes("::") ? [...left, ...Array(8 - left.length - right.length).fill("0"), ...right] : left;
+  return groups.slice(0, 4).map((g) => parseInt(g || "0", 16).toString(16)).join(":") + "::/64";
+}
+
 async function checkRateLimits(ip) {
   if (!ddb) return;
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
   const hour = now.toISOString().slice(0, 13);
-  const who = ip || "unknown";
+  const who = clientKey(ip);
 
   if (!(await consume(`ip#${who}#h#${hour}`, PER_IP_HOUR, 2 * 3600))) {
     throw new Rejection(429, "rate-limited", `You've reached the limit of ${PER_IP_HOUR} scans per hour. Please try again later.`);
@@ -110,4 +124,4 @@ async function guardScanRequest({ origin, ip, turnstileToken }) {
   await checkRateLimits(ip);
 }
 
-module.exports = { guardScanRequest, Rejection };
+module.exports = { guardScanRequest, Rejection, clientKey };
