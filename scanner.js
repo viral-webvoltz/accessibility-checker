@@ -79,10 +79,13 @@ const COMMON_ARGS = [
 
 async function launchBrowser() {
   if (IS_LAMBDA) {
-    // Installed only in the Lambda image (see Dockerfile.lambda).
-    const chromium = require("@sparticuz/chromium");
+    // Installed only in the Lambda image (see Dockerfile.lambda). It's an
+    // ES module, so it has to be loaded with import() rather than require().
+    const { default: chromium } = await import("@sparticuz/chromium");
+    // defaultArgs() is async in Puppeteer 25.
+    const args = await puppeteer.defaultArgs({ args: [...chromium.args, ...COMMON_ARGS], headless: "shell" });
     return puppeteer.launch({
-      args: puppeteer.defaultArgs({ args: [...chromium.args, ...COMMON_ARGS], headless: "shell" }),
+      args,
       executablePath: await chromium.executablePath(),
       headless: "shell",
       acceptInsecureCerts: true,

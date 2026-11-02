@@ -17,7 +17,7 @@ Browser ──POST /api/scan──▶ Lambda Function URL ──▶ guard (origi
 - An AWS account, and an IAM user or SSO role that can create CloudFormation stacks, Lambda, ECR, DynamoDB, IAM roles, CloudWatch Logs and Budgets (AdministratorAccess is simplest for a personal account).
 - AWS CLI v2: `brew install awscli`, then `aws configure` (or `aws configure sso`).
 - AWS SAM CLI: `brew install aws-sam-cli`.
-- Docker Desktop, running. On an Apple Silicon Mac the arm64 image builds natively.
+- Docker Desktop, running. The image is x86_64 (the Lambda Chromium build is x86-only); on an Apple Silicon Mac Docker builds it through emulation, so the first build takes a few minutes.
 
 **For the frontend**
 - A Vercel account connected to your GitHub repo.
@@ -94,15 +94,15 @@ Everything below runs **before Chromium starts**, so a rejected request costs a 
 
 ### Expected bill
 
-Lambda arm64 costs about $0.0000133 per GB-second. The always-free tier covers 400,000 GB-seconds and 1M requests a month.
+Lambda x86_64 costs about $0.0000167 per GB-second. The always-free tier covers 400,000 GB-seconds and 1M requests a month.
 
 | Scan | Rough cost |
 |---|---|
-| 1 page (~15 s × 2 GB) | ~$0.0004 |
-| 5-page crawl (~45 s × 2 GB) | ~$0.0012 |
+| 1 page (~15 s × 2 GB) | ~$0.0005 |
+| 5-page crawl (~45 s × 2 GB) | ~$0.0015 |
 
 - **Typical use** (a few hundred scans a month) stays inside the free tier: about **$0–0.20/month**, mostly ECR image storage (~$0.10/GB-month).
-- **Absolute worst case**: someone hits the 100/day cap every day and every scan runs the full 3 minutes. That's ~1.1M GB-s/month, so **about $9/month**. Lower `ScansPerDayGlobal` to lower that ceiling linearly (50/day ≈ $4).
+- **Absolute worst case**: someone hits the 100/day cap every day and every scan runs the full 3 minutes. That's ~1.1M GB-s/month, ~0.7M above the free tier, so **about $11/month**. Lower `ScansPerDayGlobal` to lower that ceiling (50/day ≈ $2.50).
 - DynamoDB, the Function URL, and data transfer at this volume: effectively $0.
 
 ## Troubleshooting

@@ -79,8 +79,9 @@ Resources:
     Properties:
       FunctionName: !Sub ${AWS::StackName}-scanner
       PackageType: Image
-      Architectures: [arm64]
-      # 2 GB is enough for Chromium with 2 tabs; arm64 is ~20% cheaper than x86.
+      # x86_64 because the Chromium build in @sparticuz/chromium is x86-only.
+      Architectures: [x86_64]
+      # 2 GB is enough for Chromium with 2 tabs.
       MemorySize: 2048
       # Hard stop per scan (10 pages fit comfortably in this).
       Timeout: 180
