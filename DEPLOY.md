@@ -49,7 +49,7 @@ sam deploy --guided
 | Prompt | Enter |
 |---|---|
 | Stack name / Region | defaults are `a11y-checker` / `ap-south-1` (Mumbai); change if you like |
-| `AllowedOrigin` | your Vercel URL, e.g. `https://a11y-checker.vercel.app` (no trailing slash) |
+| `AllowedOrigin` | your site URL(s), comma-separated, e.g. `https://checker.example.com,https://a11y-checker.vercel.app` (no trailing slash) |
 | `AlertEmail` | where budget alerts go (confirm the AWS email you'll get) |
 | `MonthlyBudgetUsd` | `5` |
 | `ReservedConcurrency` | `2` (see troubleshooting if it fails) |
@@ -83,7 +83,7 @@ Everything below runs **before Chromium starts**, so a rejected request costs a 
 
 | Layer | What it does |
 |---|---|
-| Origin check | Requests must come from `AllowedOrigin`. Stops other websites from using your scanner. |
+| Origin check | Requests must come from one of the `AllowedOrigin` URLs. Stops other websites from using your scanner. |
 | Turnstile (optional) | A one-time human check on the form, verified server-side. Stops scripts that call the URL directly. This is the only layer that does. |
 | Per-IP limits | 5 scans/hour and 20/day per IP (DynamoDB counters that expire on their own). |
 | Global daily cap | 100 scans/day for everyone combined. **This is the hard cost ceiling.** |

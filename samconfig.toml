@@ -19,6 +19,6 @@ resolve_s3 = true
 # TurnstileSecret is left out on purpose: pass it once with
 #   sam deploy --parameter-overrides TurnstileSecret=...
 # (CloudFormation keeps the previous value on later deploys).
-parameter_overrides = "AllowedOrigin=\"https://accessibility-checker-pi.vercel.app\" AlertEmail=\"viraldeshle1234@gmail.com\" MonthlyBudgetUsd=\"5\" ReservedConcurrency=\"none\" ScansPerIpPerHour=\"5\" ScansPerIpPerDay=\"20\" ScansPerDayGlobal=\"100\" InvocationsPerMinuteLimit=\"60\""
+parameter_overrides = "AllowedOrigin=\"https://accessibility-checker.webvoltz.com,https://accessibility-checker-pi.vercel.app\" AlertEmail=\"viraldeshle1234@gmail.com\" MonthlyBudgetUsd=\"5\" ReservedConcurrency=\"none\" ScansPerIpPerHour=\"5\" ScansPerIpPerDay=\"20\" ScansPerDayGlobal=\"100\" InvocationsPerMinuteLimit=\"60\""
 confirm_changeset = false
 fail_on_empty_changeset = false

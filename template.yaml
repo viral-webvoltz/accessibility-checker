@@ -7,10 +7,10 @@ Description: >
 
 Parameters:
   AllowedOrigin:
-    Type: String
-    Description: Your frontend URL exactly as the browser sends it, e.g. https://a11y-checker.vercel.app (no trailing slash)
-    AllowedPattern: "^https?://[^/]+$"
-    ConstraintDescription: Must be an origin like https://example.vercel.app with no path or trailing slash.
+    Type: CommaDelimitedList
+    Description: >
+      Comma-separated frontend URLs exactly as the browser sends them, e.g.
+      https://checker.example.com,https://a11y-checker.vercel.app (no paths, no trailing slash)
 
   AlertEmail:
     Type: String
@@ -102,7 +102,7 @@ Resources:
       Environment:
         Variables:
           NODE_ENV: production
-          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          ALLOWED_ORIGIN: !Join [",", !Ref AllowedOrigin]
           RATE_TABLE: !Ref RateLimitTable
           SCANS_PER_IP_PER_HOUR: !Ref ScansPerIpPerHour
           SCANS_PER_IP_PER_DAY: !Ref ScansPerIpPerDay
@@ -123,7 +123,7 @@ Resources:
         AuthType: NONE
         InvokeMode: RESPONSE_STREAM
         Cors:
-          AllowOrigins: [!Ref AllowedOrigin]
+          AllowOrigins: !Ref AllowedOrigin
           AllowMethods: [POST, GET]
           AllowHeaders: [content-type]
           MaxAge: 3600

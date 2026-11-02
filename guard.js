@@ -5,7 +5,7 @@
 // a rejected request costs a few milliseconds of Lambda time.
 //
 // Env:
-//   ALLOWED_ORIGIN          frontend origin, e.g. https://app.vercel.app ("*" disables the check)
+//   ALLOWED_ORIGIN          comma-separated frontend origins, e.g. https://app.vercel.app ("*" disables the check)
 //   RATE_TABLE              DynamoDB table name (unset → rate limiting off, e.g. local dev)
 //   SCANS_PER_IP_PER_HOUR   default 5
 //   SCANS_PER_IP_PER_DAY    default 20
@@ -15,7 +15,10 @@ const net = require("net");
 const { DynamoDBClient, UpdateItemCommand } = require("@aws-sdk/client-dynamodb");
 const logger = require("./logger");
 
-const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "*").replace(/\/+$/, "");
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || "*")
+  .split(",")
+  .map((o) => o.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
 const RATE_TABLE = process.env.RATE_TABLE || "";
 const PER_IP_HOUR = parseInt(process.env.SCANS_PER_IP_PER_HOUR) || 5;
 const PER_IP_DAY = parseInt(process.env.SCANS_PER_IP_PER_DAY) || 20;
@@ -33,8 +36,8 @@ class Rejection extends Error {
 }
 
 function checkOrigin(origin) {
-  if (ALLOWED_ORIGIN === "*") return;
-  if ((origin || "").replace(/\/+$/, "") !== ALLOWED_ORIGIN) {
+  if (ALLOWED_ORIGINS.includes("*")) return;
+  if (!ALLOWED_ORIGINS.includes((origin || "").replace(/\/+$/, ""))) {
     throw new Rejection(403, "forbidden-origin", "This scanner only accepts requests from its own website.");
   }
 }
